@@ -1,0 +1,18 @@
+Package: SoilHydro
+Type: Package
+Title: Van Genuchten Fitting and Derived Hydrophysical Metrics
+Version: 0.1.0
+Authors@R: c(
+    person("Gutierrez", "Erick", email="edg0030@auburn.edu", role=c("aut", "cre")),
+    person("Da Silva", "Andre", role="aut")
+    )
+Maintainer: Erick Gutierrez <edg0030@auburn.edu>
+Description: Fit Van Genuchten retention curves, predict theta(h), compute water points (saturation, PWP, AWC), pore-size classes, and plot results with minimal dependencies.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Imports:
+    ggplot2,
+    stats
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 6.0.1
