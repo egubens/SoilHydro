@@ -239,14 +239,13 @@ run the full workflow.</p>
 <div class="section level3">
 <h3 id="derived-metrics-water-points-and-awc">Derived metrics: water points and AWC<a class="anchor" aria-label="anchor" href="#derived-metrics-water-points-and-awc"></a>
 </h3>
-<p>We define a “near‑saturation” point at 10 kPa (field‑saturated water
-content proxy) and <strong>PWP</strong> at 1500 kPa.
-<strong>AWC</strong> is
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>θ</mi><mrow><mi>s</mi><mi>a</mi><mi>t</mi></mrow></msub><mo>−</mo><msub><mi>θ</mi><mrow><mi>p</mi><mi>w</mi><mi>p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">\theta_{sat} - \theta_{pwp}</annotation></semantics></math>.</p>
+<p>We define <strong>FC</strong> at 10 kPa and <strong>PWP</strong> at
+1500 kPa. <strong>AWC</strong> is
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>θ</mi><mrow><mi>f</mi><mi>c</mi></mrow></msub><mo>−</mo><msub><mi>θ</mi><mrow><mi>p</mi><mi>w</mi><mi>p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">\theta_{fc} - \theta_{pwp}</annotation></semantics></math>.</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">wp</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/vg_water_points.html">vg_water_points</a></span><span class="op">(</span><span class="va">fits</span>, id_col <span class="op">=</span> <span class="st">"Product"</span>, sat_kPa <span class="op">=</span> <span class="fl">10</span>, pwp_kPa <span class="op">=</span> <span class="fl">1500</span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="va">wp</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/vg_water_points.html">vg_water_points</a></span><span class="op">(</span><span class="va">fits</span>, id_col <span class="op">=</span> <span class="st">"Product"</span>, fc_kPa <span class="op">=</span> <span class="fl">10</span>, pwp_kPa <span class="op">=</span> <span class="fl">1500</span><span class="op">)</span></span>
 <span><span class="va">wp</span></span>
-<span><span class="co">#&gt;       Product theta_sat  theta_pwp       AWC</span></span>
+<span><span class="co">#&gt;       Product  theta_fc  theta_pwp       AWC</span></span>
 <span><span class="co">#&gt; 1 ArtiMicro05 0.3440217 0.04183028 0.3021914</span></span>
 <span><span class="co">#&gt; 2     Control 0.4047486 0.12191947 0.2828291</span></span>
 <span><span class="co">#&gt; 3   Persist10 0.4040153 0.07855736 0.3254580</span></span></code></pre></div>
@@ -388,10 +387,9 @@ and smooth plotting with fixed ranges.</p>
 <div class="section level3">
 <h3 id="interpreting-water-points-and-awc">4. Interpreting water points and AWC<a class="anchor" aria-label="anchor" href="#interpreting-water-points-and-awc"></a>
 </h3>
-<p>The 10 kPa “saturation” is a pragmatic proxy (near field capacity
-depends on texture/structure). PWP at 1500 kPa is conventional for many
-crops. <strong>AWC</strong> helps compare treatments but should be
-complemented by conductivity/retention hysteresis where available.</p>
+<p>FC at 10 kPa. PWP at 1500 kPa is conventional for many crops.
+<strong>AWC</strong> helps compare treatments but should be complemented
+by conductivity/retention hysteresis where available.</p>
 </div>
 <div class="section level3">
 <h3 id="pore-size-classes">5. Pore-size classes<a class="anchor" aria-label="anchor" href="#pore-size-classes"></a>
@@ -505,9 +503,9 @@ table.</li>
 <strong>Derived metrics</strong>
 <ul>
 <li>
-<code>vg_water_points(params_df, id_col, sat_kPa=10, pwp_kPa=1500)</code>
+<code>vg_water_points(params_df, id_col, fc_kPa=10, pwp_kPa=1500)</code>
 →
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>θ</mi><mrow><mi>s</mi><mi>a</mi><mi>t</mi></mrow></msub><mo>,</mo><msub><mi>θ</mi><mrow><mi>p</mi><mi>w</mi><mi>p</mi></mrow></msub><mo>,</mo><mtext mathvariant="normal">AWC</mtext></mrow><annotation encoding="application/x-tex">\theta_{sat}, \theta_{pwp}, \text{AWC}</annotation></semantics></math>.</li>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>θ</mi><mrow><mi>f</mi><mi>c</mi></mrow></msub><mo>,</mo><msub><mi>θ</mi><mrow><mi>p</mi><mi>w</mi><mi>p</mi></mrow></msub><mo>,</mo><mtext mathvariant="normal">AWC</mtext></mrow><annotation encoding="application/x-tex">\theta_{fc}, \theta_{pwp}, \text{AWC}</annotation></semantics></math>.</li>
 <li>
 <code>vg_pore_classes(params_df, id_col, d_micro_um=10, d_macro_um=1000, percent_basis=c("theta_s","available"), include_residual_in_micro=TRUE, return_residual=FALSE)</code>
 → macro/meso/micro volumes &amp; %.</li>

@@ -2,12 +2,12 @@
 % Please edit documentation in R/documentation.R
 \name{vg_water_points}
 \alias{vg_water_points}
-\title{Saturation, PWP, and available water from VG parameters (kPa)}
+\title{FC, PWP, and available water from VG parameters (kPa)}
 \usage{
 vg_water_points(
   params_df,
   id_col = NULL,
-  sat_kPa = 10,
+  fc_kPa = 10,
   pwp_kPa = 1500,
   filter_id = NULL
 )
@@ -17,26 +17,26 @@ vg_water_points(
 
 \item{id_col}{Name of the ID column in \code{params_df}. Defaults to the first column.}
 
-\item{sat_kPa}{Numeric, suction for “saturation” (default 10 kPa).}
+\item{fc_kPa}{Numeric, suction for FC (default 10 kPa).}
 
 \item{pwp_kPa}{Numeric, suction for PWP (default 1500 kPa).}
 
 \item{filter_id}{Optional scalar to compute \strong{only one product} from \code{params_df}.}
 }
 \value{
-\code{data.frame} with columns \code{ID, theta_sat, theta_pwp, AWC}.
+\code{data.frame} with columns \code{ID, theta_fc, theta_pwp, AWC}.
 }
 \description{
-Computes \eqn{\theta} at a “saturation” suction (default 10 kPa),
+Computes \eqn{\theta} at FC suction (default 10 kPa),
 at permanent wilting point (default 1500 kPa), and returns available water content.
 }
 \examples{
 # Using 'fits' from vg_fit_optim():
-# Compute near-saturation at 10 kPa and PWP at 1500 kPa plus AWC:
-wp <- vg_water_points(fits, id_col = "ID", sat_kPa = 10, pwp_kPa = 1500)
+# Compute FC at 10 kPa and PWP at 1500 kPa plus AWC:
+wp <- vg_water_points(fits, id_col = "ID", fc_kPa = 10, pwp_kPa = 1500)
 wp
 
-# Change the near-saturation definition (e.g., 6 kPa):
-wp6 <- vg_water_points(fits, id_col = "ID", sat_kPa = 6, pwp_kPa = 1500)
-wp6
+# Change the FC definition (e.g., 30 kPa):
+wp30 <- vg_water_points(fits, id_col = "ID", fc_kPa = 30, pwp_kPa = 1500)
+wp30
 }

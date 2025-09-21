@@ -69,7 +69,7 @@
 <div class="page-header"><h1 id="soilhydro--van-genuchten-water-retention-curve-tools">
 <strong>SoilHydro</strong> — Van Genuchten Water Retention Curve Tools<a class="anchor" aria-label="anchor" href="#soilhydro--van-genuchten-water-retention-curve-tools"></a>
 </h1></div>
-<p><strong>SoilHydro</strong> is an R package for fitting <strong>Van Genuchten</strong> water retention curves (WRC) and deriving hydrophysical metrics. It standardizes suction units, fits per treatment/group, predicts <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>θ</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>h</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\theta(h)</annotation></semantics></math>, computes water points (sat, PWP, AWC), partitions porosity into macro/meso/micro classes, and plots results.</p>
+<p><strong>SoilHydro</strong> is an R package for fitting <strong>Van Genuchten</strong> water retention curves (WRC) and deriving hydrophysical metrics. It standardizes suction units, fits per treatment/group, predicts <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>θ</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>h</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\theta(h)</annotation></semantics></math>, computes water points (FC, PWP, AWC), partitions porosity into macro/meso/micro classes, and plots results.</p>
 <ul>
 <li>📦 <strong>Dependencies</strong>: <code>stats</code>, <code>ggplot2</code>
 </li>
@@ -78,11 +78,7 @@
 <li>🧰 <strong>Plotting</strong>: One WRC plot per treatment; pore-size stacked bars (percent or volume)</li>
 </ul>
 <hr>
-<div class="section level2">
-<h2 id="setup-for-pkgdown-friendly-figures">Setup for pkgdown-friendly figures<a class="anchor" aria-label="anchor" href="#setup-for-pkgdown-friendly-figures"></a>
-</h2>
 <hr>
-</div>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
@@ -173,10 +169,10 @@ Observed vs fitted WRC for one treatment (Control).
 </p>
 </div>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="co"># --------- 6) Water points: “saturation” at 10 kPa, PWP at 1500 kPa ---------</span></span>
-<span><span class="va">wp</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/vg_water_points.html">vg_water_points</a></span><span class="op">(</span><span class="va">fits</span>, id_col <span class="op">=</span> <span class="st">"Product"</span>, sat_kPa <span class="op">=</span> <span class="fl">10</span>, pwp_kPa <span class="op">=</span> <span class="fl">1500</span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="co"># --------- 6) Water points: FC at 10 kPa, PWP at 1500 kPa ---------</span></span>
+<span><span class="va">wp</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/vg_water_points.html">vg_water_points</a></span><span class="op">(</span><span class="va">fits</span>, id_col <span class="op">=</span> <span class="st">"Product"</span>, fc_kPa <span class="op">=</span> <span class="fl">10</span>, pwp_kPa <span class="op">=</span> <span class="fl">1500</span><span class="op">)</span></span>
 <span><span class="va">wp</span></span></code></pre></div>
-<div class="sourceCode" id="cb11"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="do">##       Product theta_sat  theta_pwp       AWC</span></span>
+<div class="sourceCode" id="cb11"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="do">##       Product  theta_fc  theta_pwp       AWC</span></span>
 <span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="do">## 1 ArtiMicro05 0.3440217 0.04183028 0.3021914</span></span>
 <span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="do">## 2     Control 0.4047486 0.12191947 0.2828291</span></span>
 <span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="do">## 3   Persist10 0.4040153 0.07855736 0.3254580</span></span></code></pre></div>
@@ -213,7 +209,7 @@ Pore-size classes from VG fits.
 <h3 id="fitting--prediction">Fitting &amp; prediction<a class="anchor" aria-label="anchor" href="#fitting--prediction"></a>
 </h3>
 <ul>
-<li><p><code>vg_fit_optim(data, id, theta, h, units)</code> — Fit VG parameters per group (or single fit if <code>id = NULL</code>).<br><strong>Returns</strong>: <id>, .fit_ok, theta_r, theta_s, alpha, n, m, R2, RMSE.</id></p></li>
+<li><p><code>vg_fit_optim(data, id, theta, h, units)</code> — Fit VG parameters per group (or single fit if <code>id = NULL</code>).<br><strong>Returns</strong>: ID, .fit_ok, theta_r, theta_s, alpha, n, m, R2, RMSE.</p></li>
 <li><p><code>vg_predict(params_df, id_col, new_h, units)</code> — Predict θ at new suctions (kPa or hPa).<br><strong>Returns</strong>: ID, h, units, theta.</p></li>
 <li><p><code>vg_fun_kPa(h_kPa, theta_r, theta_s, alpha, n)</code> — Core VG function (kPa).</p></li>
 </ul>
@@ -235,7 +231,7 @@ Pore-size classes from VG fits.
 </h3>
 <ul>
 <li>
-<code>vg_water_points(params_df, id_col, sat_kPa = 10, pwp_kPa = 1500)</code> — θ at “saturation” suction &amp; PWP; <strong>AWC</strong> = θ_sat − θ_pwp.</li>
+<code>vg_water_points(params_df, id_col, fc_kPa = 10, pwp_kPa = 1500)</code> — θ at <strong>FC</strong> suction &amp; PWP; <strong>AWC</strong> = θ_fc − θ_pwp.</li>
 <li>
 <code>vg_pore_classes(params_df, id_col, d_micro_um = 10, d_macro_um = 1000, percent_basis = c("theta_s","available"), include_residual_in_micro = TRUE, return_residual = FALSE)</code> — Macro/meso/micro volumes and percentages.</li>
 </ul>

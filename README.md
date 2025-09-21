@@ -4,7 +4,7 @@
 **SoilHydro** is an R package for fitting **Van Genuchten** water
 retention curves (WRC) and deriving hydrophysical metrics. It
 standardizes suction units, fits per treatment/group, predicts
-$\theta(h)$, computes water points (sat, PWP, AWC), partitions porosity
+$\theta(h)$, computes water points (FC, PWP, AWC), partitions porosity
 into macro/meso/micro classes, and plots results.
 
 - 📦 **Dependencies**: `stats`, `ggplot2`
@@ -15,8 +15,6 @@ into macro/meso/micro classes, and plots results.
   (percent or volume)
 
 ------------------------------------------------------------------------
-
-## Setup for pkgdown-friendly figures
 
 ------------------------------------------------------------------------
 
@@ -130,12 +128,12 @@ Observed vs fitted WRC for one treatment (Control).
 </div>
 
 ``` r
-# --------- 6) Water points: “saturation” at 10 kPa, PWP at 1500 kPa ---------
-wp <- vg_water_points(fits, id_col = "Product", sat_kPa = 10, pwp_kPa = 1500)
+# --------- 6) Water points: FC at 10 kPa, PWP at 1500 kPa ---------
+wp <- vg_water_points(fits, id_col = "Product", fc_kPa = 10, pwp_kPa = 1500)
 wp
 ```
 
-    ##       Product theta_sat  theta_pwp       AWC
+    ##       Product  theta_fc  theta_pwp       AWC
     ## 1 ArtiMicro05 0.3440217 0.04183028 0.3021914
     ## 2     Control 0.4047486 0.12191947 0.2828291
     ## 3   Persist10 0.4040153 0.07855736 0.3254580
@@ -184,7 +182,7 @@ Pore-size classes from VG fits.
 
 - `vg_fit_optim(data, id, theta, h, units)` — Fit VG parameters per
   group (or single fit if `id = NULL`).  
-  **Returns**: <ID>, .fit_ok, theta_r, theta_s, alpha, n, m, R2, RMSE.
+  **Returns**: ID, .fit_ok, theta_r, theta_s, alpha, n, m, R2, RMSE.
 
 - `vg_predict(params_df, id_col, new_h, units)` — Predict θ at new
   suctions (kPa or hPa).  
@@ -204,8 +202,8 @@ Pore-size classes from VG fits.
 
 ### Derived metrics
 
-- `vg_water_points(params_df, id_col, sat_kPa = 10, pwp_kPa = 1500)` — θ
-  at “saturation” suction & PWP; **AWC** = θ_sat − θ_pwp.
+- `vg_water_points(params_df, id_col, fc_kPa = 10, pwp_kPa = 1500)` — θ
+  at **FC** suction & PWP; **AWC** = θ_fc − θ_pwp.
 - `vg_pore_classes(params_df, id_col, d_micro_um = 10, d_macro_um = 1000, percent_basis = c("theta_s","available"), include_residual_in_micro = TRUE, return_residual = FALSE)`
   — Macro/meso/micro volumes and percentages.
 
