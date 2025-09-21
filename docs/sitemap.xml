@@ -1,0 +1,20 @@
+<urlset xmlns = 'http://www.sitemaps.org/schemas/sitemap/0.9'>
+<url><loc>/404.html</loc></url>
+<url><loc>/articles/index.html</loc></url>
+<url><loc>/articles/vignette.html</loc></url>
+<url><loc>/authors.html</loc></url>
+<url><loc>/index.html</loc></url>
+<url><loc>/LICENSE-text.html</loc></url>
+<url><loc>/reference/dot-to_kPa.html</loc></url>
+<url><loc>/reference/index.html</loc></url>
+<url><loc>/reference/plot_pore_classes_percent.html</loc></url>
+<url><loc>/reference/plot_pore_classes_volume.html</loc></url>
+<url><loc>/reference/plot_vg_fits.html</loc></url>
+<url><loc>/reference/vg_fit_optim.html</loc></url>
+<url><loc>/reference/vg_fun_kPa.html</loc></url>
+<url><loc>/reference/vg_pore_classes.html</loc></url>
+<url><loc>/reference/vg_predict.html</loc></url>
+<url><loc>/reference/vg_sse_kPa.html</loc></url>
+<url><loc>/reference/vg_water_points.html</loc></url>
+</urlset>
+

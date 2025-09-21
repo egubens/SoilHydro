@@ -1,0 +1,17 @@
+home:
+  title: "Welcome to SoilHydro"
+  contents:
+    - README.md
+template:
+  params:
+    bootswatch: flatly
+navbar:
+  left:
+  - text: Vignette
+    href: articles/vignette.html
+  - text: Reference
+    href: reference/index.html
+  right:
+  - icon: fa-github
+    href: https://github.com/egubens/SoilHydro.git
+

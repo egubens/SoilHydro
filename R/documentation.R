@@ -55,6 +55,8 @@ vg_sse_kPa <- function(par, h_kPa, theta_obs) {
 #' @param data A \code{data.frame} with columns for ID (optional), \eqn{\theta}, and suction.
 #' @param id Character string with the ID/treatment column name in \code{data}, or \code{NULL}
 #'   for a single (ungrouped) fit.
+#' @param id_value Optional scalar to fit **only one product** (rows where \code{data[[id]] == id_value}).
+#'   Ignored if \code{id} is \code{NULL}.
 #' @param theta Character string column name for volumetric water content.
 #' @param h Character string column name for suction/pressure head.
 #' @param units Either \code{"kPa"} or \code{"hPa"} indicating the units of \code{h}.
@@ -69,20 +71,46 @@ vg_sse_kPa <- function(par, h_kPa, theta_obs) {
 #'   }
 #' @details Optimizer: \code{\link[stats]{optim}} with \code{method="L-BFGS-B"}.
 #' @examples
-#' # df <- data.frame(Product = rep(c("A","B"), each=6),
-#' #                  theta   = runif(12, 0.05, 0.45),
-#' #                  hPa     = rep(c(1,10,30,50,100,300), 2))
-#' # fits <- vg_fit_optim(df, id="Product", theta="theta", h="hPa", units="hPa")
+#' set.seed(1)
+#'
+#' # Simulate two "treatments" with distinct VG parameters (in kPa)
+#' tru <- list(
+#'   A = list(theta_r = 0.05, theta_s = 0.42, alpha = 0.04, n = 1.45),
+#'   B = list(theta_r = 0.04, theta_s = 0.46, alpha = 0.07, n = 1.55)
+#' )
+#' h_kPa <- c(0.1, 1, 3, 10, 33, 100, 300, 1000)  # typical lab suctions
+#'
+#' sim_one <- function(id, p) {
+#'   th <- vg_fun_kPa(h_kPa, p$theta_r, p$theta_s, p$alpha, p$n)
+#'   th <- pmin(p$theta_s, pmax(0, th + rnorm(length(th), sd = 0.004)))
+#'   data.frame(ID = id, h = h_kPa, theta = th)
+#' }
+#' df <- rbind(sim_one("A", tru$A), sim_one("B", tru$B))
+#'
+#' # Fit per ID; units are "kPa" since h is in kPa
+#' fits <- vg_fit_optim(data = df, id = "ID", theta = "theta", h = "h", units = "kPa")
+#' fits
+#'
+#' # Single (ungrouped) fit example:
+#' one <- subset(df, ID == "A")
+#' fit_one <- vg_fit_optim(data = one, id = NULL, theta = "theta", h = "h", units = "kPa")
+#' fit_one
 #' @importFrom stats optim
 #' @export
-vg_fit_optim <- function(data, id = NULL, theta, h,
-                             units = c("kPa","hPa"),
-                             lower = c(0, 0, 1e-6, 1.01),
-                             upper = c(1.2, 1.2, 50,    8)) {
+vg_fit_optim <- function(data, id = NULL, id_value = NULL, theta, h,
+                         units = c("kPa","hPa"),
+                         lower = c(0, 0, 1e-6, 1.01),
+                         upper = c(1.2, 1.2, 50,    8)) {
   units <- match.arg(units)
   stopifnot(is.data.frame(data))
   stopifnot(theta %in% names(data), h %in% names(data))
-  if (!is.null(id)) stopifnot(id %in% names(data))
+  if (!is.null(id)) {
+    stopifnot(id %in% names(data))
+    if (!is.null(id_value)) {
+      data <- data[data[[id]] == id_value, , drop = FALSE]
+      if (nrow(data) == 0) stop("No rows match id_value in the id column.")
+    }
+  }
 
   theta_vals <- data[[theta]]
   h_vals_raw <- data[[h]]
@@ -157,20 +185,40 @@ vg_fit_optim <- function(data, id = NULL, theta, h,
 #' @param id_col Name of the ID column in \code{params_df}. Defaults to the first column.
 #' @param new_h Numeric vector of new suctions.
 #' @param units Units of \code{new_h}, either \code{"kPa"} or \code{"hPa"}.
+#' @param filter_id Optional scalar to return predictions only for a single ID.
 #' @return \code{data.frame} with columns \code{ID, h, units, theta}.
 #' @examples
-#' # preds <- vg_predict(fits, id_col="Product", new_h=c(10, 100, 1000), units="hPa")
+#' # Using 'fits' from the vg_fit_optim() example:
+#' # Predict theta at custom suctions (kPa) for all IDs:
+#' new_grid <- c(0.5, 5, 50, 500, 1500)
+#' pred_all <- vg_predict(fits, id_col = "ID", new_h = new_grid, units = "kPa")
+#' head(pred_all)
+#'
+#' # Predict only for a single ID:
+#' pred_A <- vg_predict(fits, id_col = "ID", new_h = new_grid, units = "kPa", filter_id = "A")
+#' pred_A
+#'
+#' # If your target grid is in hPa, set units = "hPa":
+#' new_hPa <- c(10, 100, 1000, 10000)  # equals 1, 10, 100, 1000 kPa
+#' pred_hPa <- vg_predict(fits, id_col = "ID", new_h = new_hPa, units = "hPa")
+#' head(pred_hPa)
 #' @export
-vg_predict <- function(params_df, id_col = NULL, new_h, units = c("kPa","hPa")) {
+vg_predict <- function(params_df, id_col = NULL, new_h, units = c("kPa","hPa"), filter_id = NULL) {
   units <- match.arg(units)
   stopifnot(is.data.frame(params_df), length(new_h) > 0)
   if (is.null(id_col)) id_col <- names(params_df)[1]
   stopifnot(id_col %in% names(params_df))
 
+  pf <- params_df
+  if (!is.null(filter_id)) {
+    pf <- pf[pf[[id_col]] == filter_id, , drop = FALSE]
+    if (nrow(pf) == 0) stop("No rows in params_df match 'filter_id'.")
+  }
+
   h_kPa <- .to_kPa(new_h, units)
-  rows <- seq_len(nrow(params_df))
+  rows <- seq_len(nrow(pf))
   out <- lapply(rows, function(i) {
-    r <- params_df[i, ]
+    r <- pf[i, ]
     if (!isTRUE(r$.fit_ok)) return(NULL)
     theta_hat <- vg_fun_kPa(h_kPa, r$theta_r, r$theta_s, r$alpha, r$n)
     data.frame(
@@ -189,21 +237,47 @@ vg_predict <- function(params_df, id_col = NULL, new_h, units = c("kPa","hPa")) 
 #' @description Produces one ggplot per treatment/ID, overlaying observed points
 #'   with the fitted Van Genuchten curve. Uses tidy-eval (no aes_string).
 #' @param data Original data.frame used for fitting.
-#' @param params_df Output of \code{\link{vg_fit_optim_any}}.
+#' @param params_df Output of \code{\link{vg_fit_optim}}.
 #' @param id,theta,h Character names of the ID, theta, and suction columns in \code{data}.
 #'   Use \code{id=NULL} for a single-group dataset.
+#' @param id_value Optional scalar to plot **only one product** (rows where \code{data[[id]] == id_value}).
+#'   Ignored if \code{id} is \code{NULL}.
 #' @param units Units of the suction column in \code{data}: "kPa" or "hPa".
 #' @param log_x Logical; draw x-axis on log10 scale.
 #' @param points Integer; number of points for the smooth VG curve.
-#' @return Named list of ggplot objects, one per ID.
+#' @return Named list of ggplot objects, one per ID (or a single plot if only one ID).
 #' @import ggplot2
+#' @examples
+#' ## Plot observed vs fitted curves per ID
+#' ## Not run on CRAN to keep checks fast.
+#' \dontrun{
+#'   library(ggplot2)
+#'   p_list <- plot_vg_fits(
+#'     data      = df,          # from vg_fit_optim() example
+#'     params_df = fits,
+#'     id        = "ID",
+#'     theta     = "theta",
+#'     h         = "h",
+#'     units     = "kPa",
+#'     log_x     = TRUE
+#'   )
+#'
+#'   # Show one of the plots
+#'   p_list[["A"]]
+#' }
 #' @export
-plot_vg_fits <- function(data, params_df, id = NULL, theta, h,
+plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
                          units = c("kPa","hPa"),
                          log_x = TRUE, points = 400) {
   units <- match.arg(units)
   stopifnot(theta %in% names(data), h %in% names(data))
-  if (!is.null(id)) stopifnot(id %in% names(data))
+  if (!is.null(id)) {
+    stopifnot(id %in% names(data))
+    if (!is.null(id_value)) {
+      data <- data[data[[id]] == id_value, , drop = FALSE]
+      if (nrow(data) == 0) stop("No rows match id_value in the id column.")
+    }
+  }
 
   # IDs
   if (is.null(id)) {
@@ -219,17 +293,33 @@ plot_vg_fits <- function(data, params_df, id = NULL, theta, h,
   d2 <- data[ok, c(h, theta), drop = FALSE]
   d2[[id_name]] <- ids[ok]
 
+  # Optional: subset params_df to the same ID(s)
+  pf <- params_df
+  if (!is.null(id) && !is.null(id_value)) {
+    pf <- pf[pf[[id_name]] == id_value & pf$.fit_ok == TRUE, , drop = FALSE]
+    if (!nrow(pf)) stop("No fitted parameters for the requested id_value.")
+  } else {
+    pf <- pf[pf$.fit_ok == TRUE, , drop = FALSE]
+  }
+
   # build predictions per ID over observed range
   id_levels <- unique(d2[[id_name]])
   preds_list <- lapply(id_levels, function(gid) {
     di <- d2[d2[[id_name]] == gid, , drop = FALSE]
-    hmin <- min(di[[h]], na.rm = TRUE); hmax <- max(di[[h]], na.rm = TRUE)
+    hmin <- suppressWarnings(min(di[[h]], na.rm = TRUE))
+    hmax <- suppressWarnings(max(di[[h]], na.rm = TRUE))
     if (!is.finite(hmin) || !is.finite(hmax) || hmax <= 0) return(NULL)
     hseq <- 10^(seq(log10(max(hmin, if (units=="kPa") 1e-6 else 1e-5)),
                     log10(hmax), length.out = points))
 
-    r <- params_df[params_df[[id_name]] == gid & params_df$.fit_ok == TRUE, , drop = FALSE]
-    if (!nrow(r)) return(NULL)
+    r <- pf[pf[[id_name]] == gid, , drop = FALSE]
+    if (!nrow(r)) {
+      # Handle single-group (id=NULL) case where params_df has column "ID"
+      if (is.null(id) && id_name == "ID" && any(pf[[id_name]] == ".all")) {
+        r <- pf[pf[[id_name]] == ".all", , drop = FALSE]
+      }
+      if (!nrow(r)) return(NULL)
+    }
 
     theta_hat <- vg_fun_kPa(.to_kPa(hseq, units),
                             r[["theta_r"]][1], r[["theta_s"]][1],
@@ -277,25 +367,36 @@ plot_vg_fits <- function(data, params_df, id = NULL, theta, h,
 #' @param id_col Name of the ID column in \code{params_df}. Defaults to the first column.
 #' @param sat_kPa Numeric, suction for “saturation” (default 10 kPa).
 #' @param pwp_kPa Numeric, suction for PWP (default 1500 kPa).
+#' @param filter_id Optional scalar to compute **only one product** from \code{params_df}.
 #' @return \code{data.frame} with columns \code{ID, theta_sat, theta_pwp, AWC}.
 #' @examples
-#' # wp <- vg_water_points(fits, id_col="Product", sat_kPa=10, pwp_kPa=1500)
+#' # Using 'fits' from vg_fit_optim():
+#' # Compute near-saturation at 10 kPa and PWP at 1500 kPa plus AWC:
+#' wp <- vg_water_points(fits, id_col = "ID", sat_kPa = 10, pwp_kPa = 1500)
+#' wp
+#'
+#' # Change the near-saturation definition (e.g., 6 kPa):
+#' wp6 <- vg_water_points(fits, id_col = "ID", sat_kPa = 6, pwp_kPa = 1500)
+#' wp6
 #' @export
 vg_water_points <- function(params_df,
                             id_col = NULL,
                             sat_kPa = 10,
-                            pwp_kPa = 1500) {
+                            pwp_kPa = 1500,
+                            filter_id = NULL) {
   if (is.null(id_col)) id_col <- names(params_df)[1]
   needed <- c(id_col, "theta_r","theta_s","alpha","n",".fit_ok")
   stopifnot(all(needed %in% names(params_df)))
 
-  rows <- which(params_df$.fit_ok %in% TRUE)
-  if (length(rows) == 0) {
-    return(params_df[0, c(id_col, "theta_sat","theta_pwp","AWC"), drop = FALSE])
+  pf <- params_df[params_df$.fit_ok %in% TRUE, , drop = FALSE]
+  if (!is.null(filter_id)) {
+    pf <- pf[pf[[id_col]] == filter_id, , drop = FALSE]
+    if (!nrow(pf)) stop("No rows in params_df match 'filter_id'.")
   }
+  if (nrow(pf) == 0) return(params_df[0, c(id_col,"theta_sat","theta_pwp","AWC"), drop = FALSE])
 
-  out <- lapply(rows, function(i){
-    r <- params_df[i, ]
+  out <- lapply(seq_len(nrow(pf)), function(i){
+    r <- pf[i, ]
     th_sat <- vg_fun_kPa(sat_kPa, r$theta_r, r$theta_s, r$alpha, r$n)
     th_pwp <- vg_fun_kPa(pwp_kPa, r$theta_r, r$theta_s, r$alpha, r$n)
     data.frame(
@@ -330,11 +431,27 @@ vg_water_points <- function(params_df,
 #' @param percent_basis Either \code{"theta_s"} (total porosity) or \code{"available"} (\eqn{\theta_s-\theta_r}).
 #' @param include_residual_in_micro Logical; if \code{TRUE} (default), micro includes \eqn{\theta_r}.
 #' @param return_residual Logical; if \code{TRUE}, appends \code{theta_residual} and \code{pct_residual}.
+#' @param filter_id Optional scalar to compute **only one product** from \code{params_df}.
 #' @return \code{data.frame} with columns
 #'   \code{<ID>, theta_macro, theta_meso, theta_micro, pct_macro, pct_meso, pct_micro, theta_r, theta_s}
 #'   (and optional residual columns).
 #' @examples
-#' # psd <- vg_pore_classes(fits, id_col="Product")
+#' # Using 'fits' from vg_fit_optim():
+#' # Percent basis = theta_s (default). Residual water included in "micro".
+#' psd <- vg_pore_classes(fits, id_col = "ID", percent_basis = "theta_s",
+#'                        include_residual_in_micro = TRUE)
+#' psd
+#'
+#' # Use "available" basis = (theta_s - theta_r) and exclude residual from micro:
+#' psd_avail <- vg_pore_classes(fits, id_col = "ID",
+#'                              percent_basis = "available",
+#'                              include_residual_in_micro = FALSE,
+#'                              return_residual = TRUE)
+#' psd_avail
+#'
+#' # Adjust pore-diameter cutoffs (micro < 5 µm, macro > 500 µm):
+#' psd_custom <- vg_pore_classes(fits, id_col = "ID", d_micro_um = 5, d_macro_um = 500)
+#' head(psd_custom)
 #' @export
 vg_pore_classes <- function(params_df,
                             id_col = NULL,
@@ -344,12 +461,26 @@ vg_pore_classes <- function(params_df,
                             cos_theta_c = 1,
                             percent_basis = c("theta_s","available"),
                             include_residual_in_micro = TRUE,
-                            return_residual = FALSE) {
+                            return_residual = FALSE,
+                            filter_id = NULL) {
 
   percent_basis <- match.arg(percent_basis)
   if (is.null(id_col)) id_col <- names(params_df)[1]
   needed <- c(id_col, "theta_r","theta_s","alpha","n",".fit_ok")
   stopifnot(all(needed %in% names(params_df)))
+
+  # Filter to single product if requested
+  pf <- params_df[params_df$.fit_ok %in% TRUE, , drop = FALSE]
+  if (!is.null(filter_id)) {
+    pf <- pf[pf[[id_col]] == filter_id, , drop = FALSE]
+    if (!nrow(pf)) stop("No rows in params_df match 'filter_id'.")
+  }
+  if (!nrow(pf)) {
+    cols <- c(id_col,"theta_macro","theta_meso","theta_micro",
+              "pct_macro","pct_meso","pct_micro","theta_r","theta_s")
+    if (isTRUE(return_residual)) cols <- c(cols, "theta_residual","pct_residual")
+    return(params_df[0, cols, drop = FALSE])
+  }
 
   # diameter (μm) → suction (kPa): psi = (4*gamma*cosθ) / d
   d_to_kPa <- function(d_um) (4*gamma*cos_theta_c) / ((d_um*1e-6) * 1000)
@@ -357,19 +488,11 @@ vg_pore_classes <- function(params_df,
   h_micro_kPa <- d_to_kPa(d_micro_um)    # ~29.1  kPa for 10   μm
   h0 <- 1e-6                             # near saturation
 
-  rows <- which(params_df$.fit_ok %in% TRUE)
-  if (!length(rows)) {
-    cols <- c(id_col,"theta_macro","theta_meso","theta_micro",
-              "pct_macro","pct_meso","pct_micro","theta_r","theta_s")
-    if (isTRUE(return_residual)) cols <- c(cols, "theta_residual","pct_residual")
-    return(params_df[0, cols, drop = FALSE])
-  }
-
-  out <- lapply(rows, function(i){
-    th_r <- params_df$theta_r[i]
-    th_s <- params_df$theta_s[i]
-    a    <- params_df$alpha[i]
-    n    <- params_df$n[i]
+  out <- lapply(seq_len(nrow(pf)), function(i){
+    th_r <- pf$theta_r[i]
+    th_s <- pf$theta_s[i]
+    a    <- pf$alpha[i]
+    n    <- pf$n[i]
 
     th0      <- vg_fun_kPa(h0,          th_r, th_s, a, n)   # ≈ θs
     th_macro <- vg_fun_kPa(h_macro_kPa, th_r, th_s, a, n)
@@ -383,15 +506,13 @@ vg_pore_classes <- function(params_df,
       vol_micro <- max(th_micro - th_r, 0)     # capillary micro only
     }
 
-    denom <- if (percent_basis == "theta_s") max(th_s, 1e-12)
-    else max(th_s - th_r, 1e-12)
-
+    denom <- if (percent_basis == "theta_s") max(th_s, 1e-12) else max(th_s - th_r, 1e-12)
     pct_macro <- 100 * vol_macro / denom
     pct_meso  <- 100 * vol_meso  / denom
     pct_micro <- 100 * vol_micro / denom
 
     res <- data.frame(
-      ID          = params_df[[id_col]][i],
+      ID          = pf[[id_col]][i],
       theta_macro = vol_macro,
       theta_meso  = vol_meso,
       theta_micro = vol_micro,
@@ -419,31 +540,59 @@ vg_pore_classes <- function(params_df,
 #' @description Stacked bar chart of macro/meso/micro percentages per treatment.
 #'   Expects the output of \code{\link{vg_pore_classes}}.
 #' @param psd_df Data frame from \code{\link{vg_pore_classes}}.
-#' @param id_col ID column name in \code{psd_df}. Defaults to the first column.
+#' @param id_col ID column name in \code{psd_df}. If \code{NULL} or missing, a dummy
+#'   column \code{ID="All"} is created (useful for single-product use).
 #' @param horiz Logical; if \code{TRUE}, flip bars horizontally.
 #' @param palette Vector of three colors for macro/meso/micro.
 #' @return A \code{ggplot} object.
 #' @examples
-#' # g_pct <- plot_pore_classes_percent(psd, id_col="Product")
+#' ## Stacked percentage bars of macro/meso/micro
+#' \donttest{
+#'   g_pct <- plot_pore_classes_percent(psd, id_col = "ID")  # 'psd' from vg_pore_classes()
+#'   g_pct
+#'
+#'   # Horizontal variant
+#'   plot_pore_classes_percent(psd, id_col = "ID", horiz = TRUE)
+#' }
 #' @import ggplot2
 #' @export
 plot_pore_classes_percent <- function(psd_df, id_col = NULL,
                                       horiz = FALSE,
                                       palette = c("#1f77b4", "#ff7f0e", "#2ca02c")) {
   stopifnot(is.data.frame(psd_df))
-  if (is.null(id_col)) id_col <- names(psd_df)[1]
+  # If no id_col provided or not present, create a dummy
+  if (is.null(id_col) || !(id_col %in% names(psd_df))) {
+    id_col <- "ID"
+    psd_df$ID <- "All"
+  }
   stopifnot(all(c(id_col, "pct_macro","pct_meso","pct_micro") %in% names(psd_df)))
 
   id_vals <- psd_df[[id_col]]
-  df_macro <- data.frame(ID=id_vals, class="Macro (>1000 \u00B5m)", value=psd_df[["pct_macro"]])
-  df_meso  <- data.frame(ID=id_vals, class="Meso (10\u20131000 \u00B5m)", value=psd_df[["pct_meso"]])
-  df_micro <- data.frame(ID=id_vals, class="Micro (<10 \u00B5m)",   value=psd_df[["pct_micro"]])
-  long_df  <- rbind(df_macro, df_meso, df_micro)
-  long_df$class <- factor(long_df$class,
-                          levels = c("Macro (>1000 \u00B5m)", "Meso (10\u20131000 \u00B5m)", "Micro (<10 \u00B5m)"))
+  # Build long-form data with dynamic ID column name
+  df_macro <- setNames(
+    data.frame(id_vals, "Macro (>1000 \u00B5m)", psd_df[["pct_macro"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  df_meso <- setNames(
+    data.frame(id_vals, "Meso (10\u20131000 \u00B5m)", psd_df[["pct_meso"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  df_micro <- setNames(
+    data.frame(id_vals, "Micro (<10 \u00B5m)", psd_df[["pct_micro"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  long_df <- rbind(df_macro, df_meso, df_micro)
 
-  g <- ggplot2::ggplot(long_df,
-                       ggplot2::aes_string(x = "ID", y = "value", fill = "class")) +
+  # Order classes (macro bottom → micro top)
+  long_df[["class"]] <- factor(
+    long_df[["class"]],
+    levels = c("Macro (>1000 \u00B5m)", "Meso (10\u20131000 \u00B5m)", "Micro (<10 \u00B5m)")
+  )
+
+  g <- ggplot2::ggplot(
+    long_df,
+    ggplot2::aes(x = .data[[id_col]], y = .data[["value"]], fill = .data[["class"]])
+  ) +
     ggplot2::geom_col(width = 0.75, color = "grey20", linewidth = 0.2) +
     ggplot2::scale_fill_manual(values = palette, name = "Pore class") +
     ggplot2::labs(x = NULL, y = "Porosity (%)",
@@ -463,26 +612,47 @@ plot_pore_classes_percent <- function(psd_df, id_col = NULL,
 #' @inheritParams plot_pore_classes_percent
 #' @return A \code{ggplot} object.
 #' @examples
-#' # g_vol <- plot_pore_classes_volume(psd, id_col="Product")
+#' ## Stacked volume bars (m^3 m^-3) of macro/meso/micro
+#' \donttest{
+#'   g_vol <- plot_pore_classes_volume(psd, id_col = "ID")   # 'psd' from vg_pore_classes()
+#'   g_vol
+#'
+#'   # Horizontal variant
+#'   plot_pore_classes_volume(psd, id_col = "ID", horiz = TRUE)
+#' }
 #' @import ggplot2
 #' @export
 plot_pore_classes_volume <- function(psd_df, id_col = NULL,
                                      horiz = FALSE,
                                      palette = c("#1f77b4", "#ff7f0e", "#2ca02c")) {
   stopifnot(is.data.frame(psd_df))
-  if (is.null(id_col)) id_col <- names(psd_df)[1]
+  if (is.null(id_col) || !(id_col %in% names(psd_df))) {
+    id_col <- "ID"
+    psd_df$ID <- "All"
+  }
   stopifnot(all(c(id_col, "theta_macro","theta_meso","theta_micro") %in% names(psd_df)))
 
   id_vals <- psd_df[[id_col]]
-  df_macro <- data.frame(ID=id_vals, class="Macro (>1000 \u00B5m)", value=psd_df[["theta_macro"]])
-  df_meso  <- data.frame(ID=id_vals, class="Meso (10\u20131000 \u00B5m)", value=psd_df[["theta_meso"]])
-  df_micro <- data.frame(ID=id_vals, class="Micro (<10 \u00B5m)",   value=psd_df[["theta_micro"]])
+  df_macro <- setNames(
+    data.frame(id_vals, "Macro (>1000 \u00B5m)", psd_df[["theta_macro"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  df_meso <- setNames(
+    data.frame(id_vals, "Meso (10\u20131000 \u00B5m)", psd_df[["theta_meso"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  df_micro <- setNames(
+    data.frame(id_vals, "Micro (<10 \u00B5m)", psd_df[["theta_micro"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
   long_df  <- rbind(df_macro, df_meso, df_micro)
-  long_df$class <- factor(long_df$class,
-                          levels = c("Macro (>1000 \u00B5m)", "Meso (10\u20131000 \u00B5m)", "Micro (<10 \u00B5m)"))
+  long_df[["class"]] <- factor(long_df[["class"]],
+                               levels = c("Macro (>1000 \u00B5m)", "Meso (10\u20131000 \u00B5m)", "Micro (<10 \u00B5m)"))
 
-  g <- ggplot2::ggplot(long_df,
-                       ggplot2::aes_string(x = "ID", y = "value", fill = "class")) +
+  g <- ggplot2::ggplot(
+    long_df,
+    ggplot2::aes(x = .data[[id_col]], y = .data[["value"]], fill = .data[["class"]])
+  ) +
     ggplot2::geom_col(width = 0.75, color = "grey20", linewidth = 0.2) +
     ggplot2::scale_fill_manual(values = palette, name = "Pore class") +
     ggplot2::labs(x = NULL, y = expression(paste("Porosity (", m^3, " ", m^{-3}, ")")),
@@ -494,4 +664,3 @@ plot_pore_classes_volume <- function(psd_df, id_col = NULL,
   if (isTRUE(horiz)) g <- g + ggplot2::coord_flip()
   g
 }
-

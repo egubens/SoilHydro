@@ -1,0 +1,292 @@
+---
+title: "SoilHydro: Van Genuchten Water Retention Curve Tools"
+subtitle: "Fitting, Diagnostics, Hydrophysical Metrics, and Visualization"
+author: "Erick Gutierrez / Auburn University"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  html_vignette:
+    toc: true
+    number_sections: true
+  github_document:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{SoilHydro: Van Genuchten Water Retention Curve Tools}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  fig.align = "center"
+)
+```
+
+# Overview
+
+**SoilHydro** is an R package for fitting **Van Genuchten** water retention curves (WRC) and computing practical hydrophysical summaries used in soil physics and agronomy. The package:
+
+- standardizes suction units (accepts **kPa** or **hPa**, fits internally in kPa);
+- fits the Van Genuchten model per treatment/group with bounded L‑BFGS‑B optimization;
+- predicts water content \( \theta(h) \) on arbitrary suction grids;
+- derives **water points** (e.g., Field Capacity at 10 kPa, Permanent Wilting Point at 1500 kPa, **Available Water Content**);
+- partitions porosity into **macro/meso/micro** classes from capillarity;
+- and provides clean **ggplot2** visualizations for curves and pore-size bars.
+
+We assume familiarity with basic soil physics concepts (\( \theta_r, \theta_s, \alpha, n, m \)) and laboratory WRC data.
+
+```{r pkg-versions, include=FALSE}
+sessionInfo()
+```
+
+# Installation
+
+```r
+# Install from GitHub using devtools
+if (!requireNamespace("devtools", quietly = TRUE)) {
+  install.packages("devtools")
+}
+
+devtools::install_github("egubens/SoilHydro")
+```
+
+**Requires**: R ≥ 3.6; Depends on base **stats** and **ggplot2**.
+
+# Data requirements
+
+Your long/tidy dataset should include at least:
+
+- an **ID/treatment** column (optional for single‑profile fits), e.g. `Product`;
+- a **theta** column with volumetric water content \( \theta \) (m^3 m^{-3});
+- a **suction** column `h` (either **kPa** or **hPa**).
+
+Pass the units of your raw suction column via `units = "kPa"` or `"hPa"`.
+
+# The Van Genuchten model
+
+We model water content \( \theta(h) \) (with suction \( h \) in **kPa**) as
+
+
+\[
+theta(h) \;=\; \theta_r + \frac{\theta_s - \theta_r}{\bigl(1 + (\alpha h)^n\bigr)^m},
+\quad m = 1 - \frac{1}{n}, \; n>1, \; \alpha>0.
+\]
+
+The package uses **Mualem's** linkage \( m = 1 - 1/n \) and fits parameters by minimizing the sum of squared errors (SSE) with **L‑BFGS‑B** bounds to enforce \( \theta_s>\theta_r\), \(n>1\), \( \alpha>0\).
+
+# Quick start with simulated data
+
+Below we simulate three treatments with “true” parameters, sample common laboratory suctions in **hPa**, add small noise, and run the full workflow.
+
+```{r quickstart, message=FALSE, warning=FALSE}
+library(SoilHydro)
+library(ggplot2)
+
+set.seed(42)
+
+# 1) "True" parameters (kPa units)
+true_params <- list(
+  Control     = list(theta_r = 0.05, theta_s = 0.42, alpha = 0.030, n = 1.42),
+  ArtiMicro05 = list(theta_r = 0.02, theta_s = 0.44, alpha = 0.100, n = 1.55),
+  Persist10   = list(theta_r = 0.04, theta_s = 0.46, alpha = 0.060, n = 1.50)
+)
+
+# 2) Suction points (hPa)
+hPa_grid <- c(1, 10, 30, 50, 75, 100, 220, 340, 440, 650, 1000, 1500, 3000, 8000, 15000)
+
+# 3) Generate theta(h) + noise
+sim_rows <- lapply(names(true_params), function(id){
+  p  <- true_params[[id]]
+  h_kPa <- hPa_grid / 10
+  theta <- SoilHydro::vg_fun_kPa(h_kPa, p$theta_r, p$theta_s, p$alpha, p$n)
+  theta_noisy <- pmin(p$theta_s, pmax(0, theta + rnorm(length(theta), sd = 0.006)))
+  data.frame(Product = id, hPa = hPa_grid, theta = theta_noisy, stringsAsFactors = FALSE)
+})
+df <- do.call(rbind, sim_rows)
+
+head(df, 8)
+```
+
+## Fit per treatment
+
+```{r fit}
+fits <- vg_fit_optim(
+  data  = df,
+  id    = "Product",
+  theta = "theta",
+  h     = "hPa",
+  units = "hPa"
+)
+fits
+```
+
+## Plot WRC
+
+```{r plot-wrc, fig.height=4.8}
+plots <- plot_vg_fits(
+  data      = df,
+  params_df = fits,
+  id        = "Product",
+  theta     = "theta",
+  h         = "hPa",
+  units     = "hPa",
+  log_x     = TRUE
+)
+plots[["Control"]]
+```
+
+## Derived metrics: water points and AWC
+
+We define a “near‑saturation” point at 10 kPa (field‑saturated water content proxy) and **PWP** at 1500 kPa. **AWC** is \( \theta_{sat} - \theta_{pwp} \).
+
+```{r water-points}
+wp <- vg_water_points(fits, id_col = "Product", sat_kPa = 10, pwp_kPa = 1500)
+wp
+```
+
+## Pore-size distribution (PSD)
+
+By capillarity, the characteristic suction \( \psi \) (kPa) associated with a pore of diameter \( d \) (µm) is approximated by
+
+
+\[
+\psi \;\approx\; \frac{4 \gamma \cos\theta_c}{d} \times 10^{-3},
+\]
+
+with surface tension \( \gamma \) (N m^{-1}) and contact angle \( \theta_c \). SoilHydro defaults to \( \gamma \approx 0.0728 \) at 20 °C and \( \cos\theta_c = 1 \). Using cutoffs \( d_{macro}=1000\,\mu\text{m} \) and \( d_{micro}=10\,\mu\text{m} \), the package partitions porosity into:
+
+- **Macro**: \( d>1000\,\mu\text{m} \) (large, drainage/airflow);
+- **Meso**: \( 10\text{–}1000\,\mu\text{m} \) (plant‑available water);
+- **Micro**: \( d<10\,\mu\text{m} \) (tightly held water).
+
+By default, **residual water** \( \theta_r \) is included within “micro” so that macro+meso+micro \(\approx \theta_s\).
+
+```{r psd-tbl}
+psd <- vg_pore_classes(
+  fits,
+  id_col = "Product",
+  percent_basis = "theta_s",
+  include_residual_in_micro = TRUE
+)
+psd
+```
+
+### PSD plots
+
+```{r psd-plots, fig.height=4.8}
+g_pct <- plot_pore_classes_percent(psd, id_col = "Product")
+g_vol <- plot_pore_classes_volume(psd,  id_col = "Product")
+g_pct
+g_vol
+```
+
+# Detailed workflow
+
+## 1. Units and preprocessing
+
+- Specify `units = "kPa"` or `"hPa"` **matching your input column**.
+- Internally, SoilHydro converts to **kPa** for fitting; parameters are returned with \( \alpha \) in kPa^{-1}.
+- Remove zero/negative suctions when plotting on log axes (the plotting helper already does this).
+
+## 2. Fitting and diagnostics
+
+`vg_fit_optim()` performs bounded least‑squares with sensible starting values per group. Returned diagnostics include **R²** and **RMSE** computed on the fitting data.
+
+**Tips for robust fitting**
+
+- Make sure your dataset spans low to high suctions to identify both \( \theta_s \) and \( \theta_r \).
+- If a group fails to converge (`.fit_ok = FALSE`), check units, outliers, and monotonicity of \( \theta(h) \).
+- Consider fixing a minimal positive suction (e.g., replace zeros by \(10^{-6}\) kPa) for stability on log scales.
+
+## 3. Prediction grids
+
+Use `vg_predict()` to predict \( \theta \) on custom suction grids (kPa or hPa). This is useful for report tables and smooth plotting with fixed ranges.
+
+```{r predict}
+# Predict on a custom kPa grid
+grid_kPa <- c(seq(0, 50, by=1), seq(55, 100, by=5), seq(110, 1600, by=10))
+pred <- vg_predict(fits, id_col = "Product", new_h = grid_kPa, units = "kPa")
+head(pred, 10)
+```
+
+## 4. Interpreting water points and AWC
+
+The 10 kPa “saturation” is a pragmatic proxy (near field capacity depends on texture/structure). PWP at 1500 kPa is conventional for many crops. **AWC** helps compare treatments but should be complemented by conductivity/retention hysteresis where available.
+
+## 5. Pore-size classes
+
+The PSD aggregation condenses the \( \theta(h) \) curve into interpretable buckets. You can change the cutoffs via `d_micro_um` and `d_macro_um`, choose percentage basis (`"theta_s"` vs `"available" = theta_s - theta_r`), and decide whether to include \( \theta_r \) in micro.
+
+```{r psd-options}
+psd2 <- vg_pore_classes(
+  fits, id_col = "Product",
+  d_micro_um = 5, d_macro_um = 500,
+  percent_basis = "available",
+  include_residual_in_micro = FALSE,
+  return_residual = TRUE
+)
+head(psd2)
+```
+
+# Visualization options
+
+- `plot_vg_fits(..., log_x = TRUE)` draws one **ggplot** per ID with observed points and a fitted curve.
+- `plot_pore_classes_percent()` and `plot_pore_classes_volume()` produce stacked bars with optional horizontal layout (`horiz = TRUE`).
+
+```{r viz-example, fig.height=4.8}
+# Show two IDs side-by-side using patchwork if desired (not required by SoilHydro)
+# install.packages("patchwork")  # if needed
+# library(patchwork)
+# plots[["Control"]] + plots[["Persist10"]]
+plots[[2]]
+``` 
+
+# Shiny app: SoilHydro_App()
+
+The package includes a **Shiny app** that lets users:
+
+- upload CSV/Excel data and map columns;
+- fit per‑ID VG parameters;
+- view tables for fits, water points, and pore classes;
+- plot WRC with observed vs fitted curves;
+- visualize PSD as percent or volume bars; and
+- download CSVs of fits and predictions.
+
+To run the app, ensure your SoilHydro functions are installed/available, then source and launch the app:
+
+```r
+SoilHydro_App()
+```
+
+# Troubleshooting
+
+- **No fits converged**: verify units, remove non‑finite values, ensure \( \theta \in [0,1.2] \) (or realistic bounds).
+- **R² is NaN**: occurs when all \( \theta \) values are identical; broaden suction range or re‑measure.
+- **Unrealistic \( \alpha, n \)**: check data coverage; tighten bounds via `lower`/`upper` in `vg_fit_optim()`.
+
+# API quick reference
+
+- **Fitting/prediction**
+  - `vg_fit_optim(data, id, theta, h, units)` → per‑group parameters + diagnostics.
+  - `vg_predict(params_df, id_col, new_h, units, filter_id)` → \( \theta(h) \) table.
+
+- **Derived metrics**
+  - `vg_water_points(params_df, id_col, sat_kPa=10, pwp_kPa=1500)` → \( \theta_{sat}, \theta_{pwp}, \text{AWC} \).
+  - `vg_pore_classes(params_df, id_col, d_micro_um=10, d_macro_um=1000, percent_basis=c("theta_s","available"), include_residual_in_micro=TRUE, return_residual=FALSE)` → macro/meso/micro volumes & %.
+
+- **Plotting**
+  - `plot_vg_fits(data, params_df, id, theta, h, units, log_x=TRUE)` → WRC plots by ID.
+  - `plot_pore_classes_percent(psd_df, id_col, horiz=FALSE)` → stacked % bars.
+  - `plot_pore_classes_volume(psd_df, id_col, horiz=FALSE)` → stacked volume bars.
+
+# Reproducibility
+
+For manuscripts, record R and package versions and set a seed for any simulation steps (as done above). Export figures with explicit sizes (e.g., `ggsave(..., width=8, height=5, units='cm', dpi=300)`) when preparing journal‑ready graphics.
+
+# References
+
+- Van Genuchten, M. Th. (1980). A closed-form equation for predicting the hydraulic conductivity of unsaturated soils. *Soil Science Society of America Journal*, 44, 892–898.
+- Mualem, Y. (1976). A new model for predicting the hydraulic conductivity of unsaturated porous media. *Water Resources Research*, 12, 513–522.
