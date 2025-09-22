@@ -93,7 +93,7 @@ ui <- fluidPage(
         ),
         tabPanel("Derived tables",
                  br(),
-                 h4("Water points (θ at sat=10 kPa and PWP=1500 kPa, plus AWC)"),
+                 h4("Water points (θ at FC=10 kPa and PWP=1500 kPa, plus AWC)"),
                  tableOutput("wp_tbl"),
                  br(),
                  h4("Pore-size classes (macro/meso/micro)"),
@@ -291,7 +291,7 @@ server <- function(input, output, session) {
   # Water points
   output$wp_tbl <- renderTable({
     fr <- fits_reactive(); req(fr)
-    vg_water_points(fr$fits, id_col = fr$id_col, sat_kPa = 10, pwp_kPa = 1500)
+    vg_water_points(fr$fits, id_col = fr$id_col, fc_kPa = 10, pwp_kPa = 1500)
   }, striped = TRUE, bordered = TRUE, spacing = "s")
 
   # Pore-size classes
