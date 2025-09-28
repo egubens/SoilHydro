@@ -1,8 +1,10 @@
 ---
 output: github_document
 ---
+[![Live app](https://img.shields.io/badge/Live%20app-SoilHydro-blue)](https://3n0c6z-erick-gutierrez.shinyapps.io/SoilHydro/)
 
 # **SoilHydro** — Van Genuchten Water Retention Curve Tools
+
 
 **SoilHydro** is an R package for fitting **Van Genuchten** water retention curves (WRC) and deriving hydrophysical metrics. It standardizes suction units, fits per treatment/group, predicts \(\theta(h)\), computes water points (FC, PWP, AWC), partitions porosity into macro/meso/micro classes, and plots results.
 
@@ -21,6 +23,14 @@ knitr::opts_chunk$set(
   fig.retina = 2
 )
 ```
+
+## Live web app
+
+You can use all **SoilHydro** functions in your browser—no installation needed:
+
+👉 [SoilHydro Web App](https://3n0c6z-erick-gutierrez.shinyapps.io/SoilHydro/)
+
+The app mirrors the package workflow (fitting, prediction, water points, and pore-size plots).
 
 ------------------------------------------------------------------------
 

@@ -18,39 +18,42 @@ vg_pore_classes(
 )
 }
 \arguments{
-\item{params_df}{Output of \code{\link{vg_fit_optim}}.}
+\item{params_df}{Output of \code{vg_fit_optim()}.}
 
 \item{id_col}{Name of the ID column in \code{params_df}. Defaults to the first column.}
 
-\item{d_micro_um, d_macro_um}{Diameter cutoffs (µm).}
+\item{d_micro_um, d_macro_um}{Diameter cutoffs in micrometers (um).}
 
-\item{gamma}{Surface tension of water (N/m), default ~0.0728 at 20 °C.}
+\item{gamma}{Surface tension of water (N/m), default ~0.0728 at 20 degrees C.}
 
 \item{cos_theta_c}{Contact angle term (dimensionless), default 1.}
 
-\item{percent_basis}{Either \code{"theta_s"} (total porosity) or \code{"available"} (\eqn{\theta_s-\theta_r}).}
+\item{percent_basis}{Either \code{"theta_s"} (total porosity) or \code{"available"}
+(i.e., \eqn{\\theta_s - \\theta_r}).}
 
-\item{include_residual_in_micro}{Logical; if \code{TRUE} (default), micro includes \eqn{\theta_r}.}
+\item{include_residual_in_micro}{If \code{TRUE} (default), the micro class includes \eqn{\\theta_r}.}
 
-\item{return_residual}{Logical; if \code{TRUE}, appends \code{theta_residual} and \code{pct_residual}.}
+\item{return_residual}{If \code{TRUE}, also returns \code{theta_residual} and \code{pct_residual}.}
 
-\item{filter_id}{Optional scalar to compute \strong{only one product} from \code{params_df}.}
+\item{filter_id}{Optional scalar to compute results for a single ID (rows where
+\code{params_df[[id_col]] == filter_id}).}
 }
 \value{
-\code{data.frame} with columns
-\code{<ID>, theta_macro, theta_meso, theta_micro, pct_macro, pct_meso, pct_micro, theta_r, theta_s}
-(and optional residual columns).
+A \code{data.frame} with columns:
+\code{<ID>}, \code{theta_macro}, \code{theta_meso}, \code{theta_micro},
+\code{pct_macro}, \code{pct_meso}, \code{pct_micro}, \code{theta_r}, \code{theta_s}
+(and residual columns if requested).
 }
 \description{
 Partitions porosity into three classes using capillary theory:
 \itemize{
-\item Macro: \eqn{d >} \code{d_macro_um} (default 1000 µm)
-\item Meso: \eqn{d \in} \link{\code{d_micro_um}, \code{d_macro_um}} (default 10–1000 µm)
-\item Micro: \eqn{d <} \code{d_micro_um} (default 10 µm)
+\item Macro: pores with diameter greater than \code{d_macro_um} (default 1000 um)
+\item Meso: pores with diameter between \code{d_micro_um} and \code{d_macro_um} (default 10--1000 um)
+\item Micro: pores with diameter less than \code{d_micro_um} (default 10 um)
 }
-By default, residual water \eqn{\theta_r} is included in the micro class so that
-macro + meso + micro \eqn{\approx \theta_s} and percentage bars (basis = \code{"theta_s"})
-reach 100\%.
+By default, residual water \eqn{\\theta_r} is included in the micro class so that
+macro + meso + micro \eqn{\\approx \\theta_s} and percentage bars
+(basis = \code{"theta_s"}) sum to 100\\%.
 }
 \examples{
 # Using 'fits' from vg_fit_optim():

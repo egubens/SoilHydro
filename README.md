@@ -1,4 +1,7 @@
 
+[![Live
+app](https://img.shields.io/badge/Live%20app-SoilHydro-blue)](https://3n0c6z-erick-gutierrez.shinyapps.io/SoilHydro/)
+
 # **SoilHydro** — Van Genuchten Water Retention Curve Tools
 
 **SoilHydro** is an R package for fitting **Van Genuchten** water
@@ -15,6 +18,17 @@ into macro/meso/micro classes, and plots results.
   (percent or volume)
 
 ------------------------------------------------------------------------
+
+## Live web app
+
+You can use all **SoilHydro** functions in your browser—no installation
+needed:
+
+👉 [SoilHydro Web
+App](https://3n0c6z-erick-gutierrez.shinyapps.io/SoilHydro/)
+
+The app mirrors the package workflow (fitting, prediction, water points,
+and pore-size plots).
 
 ------------------------------------------------------------------------
 
@@ -43,11 +57,6 @@ measurement noise, and then run the full workflow.
 ``` r
 library(SoilHydro)
 library(ggplot2)
-```
-
-    ## Warning: package 'ggplot2' was built under R version 4.3.3
-
-``` r
 set.seed(42)
 ```
 
@@ -122,6 +131,7 @@ plots[["Control"]]
 
 <img src="man/figures/README-plot-wrc-1.png" alt="Observed water contents and fitted Van Genuchten curve (log10 suction)." width="100%" />
 <p class="caption">
+
 Observed vs fitted WRC for one treatment (Control).
 </p>
 
@@ -156,6 +166,7 @@ g_pct
 
 <img src="man/figures/README-psd-plots-1.png" alt="Pore-size distribution: percent (left) and volume (right) stacked bars by treatment." width="100%" />
 <p class="caption">
+
 Pore-size classes from VG fits.
 </p>
 
@@ -169,6 +180,7 @@ g_vol
 
 <img src="man/figures/README-psd-plots-2.png" alt="Pore-size distribution: percent (left) and volume (right) stacked bars by treatment." width="100%" />
 <p class="caption">
+
 Pore-size classes from VG fits.
 </p>
 

@@ -1,22 +1,453 @@
-# app.R
-# Shiny app to fit Van Genuchten parameters from CSV/Excel using vg_fit_optim()
-# and plot WRC, PSD (percent/volume), and a fixed predicted-range WRC (0–1600 kPa)
+# app.R — Self-contained Van Genuchten WRC fitter
+# Includes all helper functions; no external package required.
 
 # ---- packages ----
 library(shiny)
 library(ggplot2)
-
-# Your package with the functions must be installed/loaded:
-#   vg_fit_optim(), plot_vg_fits(), vg_fun_kPa(),
-#   vg_water_points(), vg_pore_classes(),
-#   plot_pore_classes_percent(), plot_pore_classes_volume()
-# library(wrcVG)   # or source("your_functions.R")
+library(rlang)  # for .data pronoun in aes()
 
 suppressWarnings({
   have_readxl <- requireNamespace("readxl", quietly = TRUE)
 })
 
-# ---- helpers ----
+# =========================================================
+# ===============  FUNCTIONS   ===============
+# =========================================================
+
+# Unit helpers
+.to_kPa <- function(x, units = c("kPa","hPa")) {
+  units <- match.arg(units)
+  if (units == "kPa") x else x/10
+}
+.from_kPa <- function(x, units = c("kPa","hPa")) {
+  units <- match.arg(units)
+  if (units == "kPa") x else x*10
+}
+
+# Van Genuchten theta(h) (kPa) with Mualem m = 1 - 1/n
+vg_fun_kPa <- function(h_kPa, theta_r, theta_s, alpha, n) {
+  m <- 1 - 1/n
+  theta_r + (theta_s - theta_r) / (1 + (alpha * h_kPa)^n)^m
+}
+
+# SSE objective
+vg_sse_kPa <- function(par, h_kPa, theta_obs) {
+  theta_r <- par[1]; theta_s <- par[2]; alpha <- par[3]; n <- par[4]
+  if (!is.finite(theta_r) || !is.finite(theta_s) || !is.finite(alpha) || !is.finite(n))
+    return(1e12)
+  if (theta_s <= theta_r || n <= 1 || alpha <= 0) return(1e12)
+  pred <- vg_fun_kPa(h_kPa, theta_r, theta_s, alpha, n)
+  sum((theta_obs - pred)^2)
+}
+
+# Fit VG per group (or all)
+vg_fit_optim <- function(data, id = NULL, id_value = NULL, theta, h,
+                         units = c("kPa","hPa"),
+                         lower = c(0, 0, 1e-6, 1.01),
+                         upper = c(1.2, 1.2, 50,    8)) {
+  units <- match.arg(units)
+  stopifnot(is.data.frame(data))
+  stopifnot(theta %in% names(data), h %in% names(data))
+  if (!is.null(id)) {
+    stopifnot(id %in% names(data))
+    if (!is.null(id_value)) {
+      data <- data[data[[id]] == id_value, , drop = FALSE]
+      if (nrow(data) == 0) stop("No rows match id_value in the id column.")
+    }
+  }
+
+  theta_vals <- data[[theta]]
+  h_vals_raw <- data[[h]]
+  h_vals <- .to_kPa(h_vals_raw, units)
+  ok <- is.finite(theta_vals) & is.finite(h_vals)
+  theta_vals <- theta_vals[ok]
+  h_vals <- h_vals[ok]
+
+  if (is.null(id)) {
+    ids <- rep(".all", length(h_vals))
+    id_name <- "ID"
+  } else {
+    ids <- data[[id]][ok]
+    id_name <- id
+  }
+
+  split_idx <- split(seq_along(ids), ids)
+  out_list <- lapply(names(split_idx), function(gid) {
+    idx <- split_idx[[gid]]
+    h_g  <- h_vals[idx]; h_g[h_g <= 0] <- 1e-6
+    th_g <- theta_vals[idx]
+    if (!length(h_g) || !length(th_g)) {
+      return(data.frame(.fit_ok = FALSE, row.names = NULL))
+    }
+
+    th_s0 <- max(th_g, na.rm = TRUE)
+    th_r0 <- min(th_g, na.rm = TRUE)
+    if (!is.finite(th_s0) || !is.finite(th_r0)) {
+      return(data.frame(.fit_ok = FALSE, row.names = NULL))
+    }
+    if (th_s0 <= th_r0) th_s0 <- th_r0 + 0.005
+    start <- c(th_r0, th_s0, 0.1, 1.5)
+
+    opt <- stats::optim(par = start, fn = vg_sse_kPa,
+                        h_kPa = h_g, theta_obs = th_g,
+                        method = "L-BFGS-B", lower = lower, upper = upper)
+
+    if (opt$convergence != 0 || !is.finite(opt$value)) {
+      return(data.frame(.fit_ok = FALSE, row.names = NULL))
+    }
+
+    theta_r <- opt$par[1]; theta_s <- opt$par[2]; alpha <- opt$par[3]; n <- opt$par[4]
+    pred <- vg_fun_kPa(h_g, theta_r, theta_s, alpha, n)
+    sse  <- sum((th_g - pred)^2)
+    sst  <- sum((th_g - mean(th_g))^2)
+
+    data.frame(
+      .ID     = gid,
+      .fit_ok = TRUE,
+      theta_r = theta_r,
+      theta_s = theta_s,
+      alpha   = alpha,
+      n       = n,
+      m       = 1 - 1/n,
+      R2      = ifelse(sst > 0, 1 - sse/sst, NA_real_),
+      RMSE    = sqrt(mean((th_g - pred)^2)),
+      row.names = NULL
+    )
+  })
+
+  res <- do.call(rbind, out_list)
+  if (nrow(res) == 0L) return(res)
+  names(res)[names(res) == ".ID"] <- id_name
+  res
+}
+
+# Predict theta for new suctions
+vg_predict <- function(params_df, id_col = NULL, new_h, units = c("kPa","hPa"), filter_id = NULL) {
+  units <- match.arg(units)
+  stopifnot(is.data.frame(params_df), length(new_h) > 0)
+  if (is.null(id_col)) id_col <- names(params_df)[1]
+  stopifnot(id_col %in% names(params_df))
+
+  pf <- params_df
+  if (!is.null(filter_id)) {
+    pf <- pf[pf[[id_col]] == filter_id, , drop = FALSE]
+    if (nrow(pf) == 0) stop("No rows in params_df match 'filter_id'.")
+  }
+
+  h_kPa <- .to_kPa(new_h, units)
+  rows <- seq_len(nrow(pf))
+  out <- lapply(rows, function(i) {
+    r <- pf[i, ]
+    if (!isTRUE(r$.fit_ok)) return(NULL)
+    theta_hat <- vg_fun_kPa(h_kPa, r$theta_r, r$theta_s, r$alpha, r$n)
+    data.frame(
+      ID = r[[id_col]],
+      h  = new_h,
+      units = units,
+      theta = theta_hat,
+      row.names = NULL
+    )
+  })
+  do.call(rbind, out)
+}
+
+# Plot observed & fitted curves
+plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
+                         units = c("kPa","hPa"),
+                         log_x = TRUE, points = 400) {
+  units <- match.arg(units)
+  stopifnot(theta %in% names(data), h %in% names(data))
+  if (!is.null(id)) {
+    stopifnot(id %in% names(data))
+    if (!is.null(id_value)) {
+      data <- data[data[[id]] == id_value, , drop = FALSE]
+      if (nrow(data) == 0) stop("No rows match id_value in the id column.")
+    }
+  }
+
+  if (is.null(id)) {
+    ids <- rep(".all", nrow(data))
+    id_name <- "ID"
+  } else {
+    ids <- data[[id]]
+    id_name <- id
+  }
+
+  ok <- is.finite(data[[theta]]) & is.finite(data[[h]]) & (data[[h]] > 0)
+  d2 <- data[ok, c(h, theta), drop = FALSE]
+  d2[[id_name]] <- ids[ok]
+
+  pf <- params_df
+  if (!is.null(id) && !is.null(id_value)) {
+    pf <- pf[pf[[id_name]] == id_value & pf$.fit_ok == TRUE, , drop = FALSE]
+    if (!nrow(pf)) stop("No fitted parameters for the requested id_value.")
+  } else {
+    pf <- pf[pf$.fit_ok == TRUE, , drop = FALSE]
+  }
+
+  id_levels <- unique(d2[[id_name]])
+  preds_list <- lapply(id_levels, function(gid) {
+    di <- d2[d2[[id_name]] == gid, , drop = FALSE]
+    hmin <- suppressWarnings(min(di[[h]], na.rm = TRUE))
+    hmax <- suppressWarnings(max(di[[h]], na.rm = TRUE))
+    if (!is.finite(hmin) || !is.finite(hmax) || hmax <= 0) return(NULL)
+    hseq <- 10^(seq(log10(max(hmin, if (units=="kPa") 1e-6 else 1e-5)),
+                    log10(hmax), length.out = points))
+
+    r <- pf[pf[[id_name]] == gid, , drop = FALSE]
+    if (!nrow(r)) {
+      if (is.null(id) && id_name == "ID" && any(pf[[id_name]] == ".all")) {
+        r <- pf[pf[[id_name]] == ".all", , drop = FALSE]
+      }
+      if (!nrow(r)) return(NULL)
+    }
+
+    theta_hat <- vg_fun_kPa(.to_kPa(hseq, units),
+                            r[["theta_r"]][1], r[["theta_s"]][1],
+                            r[["alpha"]][1],   r[["n"]][1])
+    data.frame(ID = gid, h = hseq, theta = theta_hat, row.names = NULL)
+  })
+  preds <- do.call(rbind, preds_list)
+
+  plots <- setNames(vector("list", length(id_levels)), id_levels)
+  for (gid in id_levels) {
+    obs_i <- d2[d2[[id_name]] == gid, , drop = FALSE]
+    pre_i <- if (!is.null(preds)) preds[preds$ID == gid, , drop = FALSE] else NULL
+
+    g <- ggplot() +
+      geom_point(
+        data = obs_i,
+        aes(x = .data[[h]], y = .data[[theta]]),
+        size = 2
+      ) +
+      (if (!is.null(pre_i) && nrow(pre_i) > 0)
+        geom_line(
+          data = pre_i,
+          aes(x = .data[["h"]], y = .data[["theta"]]),
+          linewidth = 0.9, color = "blue"
+        ) else NULL) +
+      labs(
+        title = paste("Van Genuchten Fit -", gid),
+        x = paste0("Suction (", units, ")"),
+        y = expression(theta)
+      ) +
+      theme_bw(base_size = 13)
+
+    if (isTRUE(log_x)) g <- g + scale_x_log10()
+    plots[[gid]] <- g
+  }
+  plots
+}
+
+# Water points & AWC
+vg_water_points <- function(params_df,
+                            id_col = NULL,
+                            fc_kPa = 10,
+                            pwp_kPa = 1500,
+                            filter_id = NULL) {
+  if (is.null(id_col)) id_col <- names(params_df)[1]
+  needed <- c(id_col, "theta_r","theta_s","alpha","n",".fit_ok")
+  stopifnot(all(needed %in% names(params_df)))
+
+  pf <- params_df[params_df$.fit_ok %in% TRUE, , drop = FALSE]
+  if (!is.null(filter_id)) {
+    pf <- pf[pf[[id_col]] == filter_id, , drop = FALSE]
+    if (!nrow(pf)) stop("No rows in params_df match 'filter_id'.")
+  }
+  if (nrow(pf) == 0) return(params_df[0, c(id_col,"theta_fc","theta_pwp","AWC"), drop = FALSE])
+
+  out <- lapply(seq_len(nrow(pf)), function(i){
+    r <- pf[i, ]
+    th_fc  <- vg_fun_kPa(fc_kPa,  r$theta_r, r$theta_s, r$alpha, r$n)
+    th_pwp <- vg_fun_kPa(pwp_kPa, r$theta_r, r$theta_s, r$alpha, r$n)
+    data.frame(
+      ID         = r[[id_col]],
+      theta_fc   = th_fc,
+      theta_pwp  = th_pwp,
+      AWC        = max(th_fc - th_pwp, 0),
+      row.names = NULL
+    )
+  })
+  out <- do.call(rbind, out)
+  names(out)[names(out) == "ID"] <- id_col
+  out
+}
+
+# Pore-size classes
+vg_pore_classes <- function(params_df,
+                            id_col = NULL,
+                            d_micro_um = 10,
+                            d_macro_um = 1000,
+                            gamma = 0.0728,
+                            cos_theta_c = 1,
+                            percent_basis = c("theta_s","available"),
+                            include_residual_in_micro = TRUE,
+                            return_residual = FALSE,
+                            filter_id = NULL) {
+
+  percent_basis <- match.arg(percent_basis)
+  if (is.null(id_col)) id_col <- names(params_df)[1]
+  needed <- c(id_col, "theta_r","theta_s","alpha","n",".fit_ok")
+  stopifnot(all(needed %in% names(params_df)))
+
+  pf <- params_df[params_df$.fit_ok %in% TRUE, , drop = FALSE]
+  if (!is.null(filter_id)) {
+    pf <- pf[pf[[id_col]] == filter_id, , drop = FALSE]
+    if (!nrow(pf)) stop("No rows in params_df match 'filter_id'.")
+  }
+  if (!nrow(pf)) {
+    cols <- c(id_col,"theta_macro","theta_meso","theta_micro",
+              "pct_macro","pct_meso","pct_micro","theta_r","theta_s")
+    if (isTRUE(return_residual)) cols <- c(cols, "theta_residual","pct_residual")
+    return(params_df[0, cols, drop = FALSE])
+  }
+
+  d_to_kPa <- function(d_um) (4*gamma*cos_theta_c) / ((d_um*1e-6) * 1000)
+  h_macro_kPa <- d_to_kPa(d_macro_um)    # ~0.29 kPa for 1000 μm
+  h_micro_kPa <- d_to_kPa(d_micro_um)    # ~29  kPa for 10 μm
+  h0 <- 1e-6                             # near saturation
+
+  out <- lapply(seq_len(nrow(pf)), function(i){
+    th_r <- pf$theta_r[i]
+    th_s <- pf$theta_s[i]
+    a    <- pf$alpha[i]
+    n    <- pf$n[i]
+
+    th0      <- vg_fun_kPa(h0,          th_r, th_s, a, n)   # ≈ θs
+    th_macro <- vg_fun_kPa(h_macro_kPa, th_r, th_s, a, n)
+    th_micro <- vg_fun_kPa(h_micro_kPa, th_r, th_s, a, n)
+
+    vol_macro <- max(th0      - th_macro, 0)
+    vol_meso  <- max(th_macro - th_micro, 0)
+    if (isTRUE(include_residual_in_micro)) {
+      vol_micro <- max(th_micro, 0)            # includes residual
+    } else {
+      vol_micro <- max(th_micro - th_r, 0)     # capillary micro only
+    }
+
+    denom <- if (percent_basis == "theta_s") max(th_s, 1e-12) else max(th_s - th_r, 1e-12)
+    pct_macro <- 100 * vol_macro / denom
+    pct_meso  <- 100 * vol_meso  / denom
+    pct_micro <- 100 * vol_micro / denom
+
+    res <- data.frame(
+      ID          = pf[[id_col]][i],
+      theta_macro = vol_macro,
+      theta_meso  = vol_meso,
+      theta_micro = vol_micro,
+      pct_macro   = pct_macro,
+      pct_meso    = pct_meso,
+      pct_micro   = pct_micro,
+      theta_r     = th_r,
+      theta_s     = th_s,
+      row.names = NULL
+    )
+    if (isTRUE(return_residual)) {
+      res$theta_residual <- th_r
+      res$pct_residual   <- 100 * th_r / denom
+    }
+    res
+  })
+
+  out <- do.call(rbind, out)
+  names(out)[names(out) == "ID"] <- id_col
+  out
+}
+
+# PSD plots (percent)
+plot_pore_classes_percent <- function(psd_df, id_col = NULL,
+                                      horiz = FALSE,
+                                      palette = c("#1f77b4", "#ff7f0e", "#2ca02c")) {
+  stopifnot(is.data.frame(psd_df))
+  if (is.null(id_col) || !(id_col %in% names(psd_df))) {
+    id_col <- "ID"
+    psd_df$ID <- "All"
+  }
+  stopifnot(all(c(id_col, "pct_macro","pct_meso","pct_micro") %in% names(psd_df)))
+
+  id_vals <- psd_df[[id_col]]
+  df_macro <- setNames(
+    data.frame(id_vals, "Macro (>1000 \u00B5m)", psd_df[["pct_macro"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  df_meso <- setNames(
+    data.frame(id_vals, "Meso (10\u20131000 \u00B5m)", psd_df[["pct_meso"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  df_micro <- setNames(
+    data.frame(id_vals, "Micro (<10 \u00B5m)", psd_df[["pct_micro"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  long_df <- rbind(df_macro, df_meso, df_micro)
+  long_df[["class"]] <- factor(
+    long_df[["class"]],
+    levels = c("Macro (>1000 \u00B5m)", "Meso (10\u20131000 \u00B5m)", "Micro (<10 \u00B5m)")
+  )
+
+  g <- ggplot(
+    long_df,
+    aes(x = .data[[id_col]], y = .data[["value"]], fill = .data[["class"]])
+  ) +
+    geom_col(width = 0.75, color = "grey20", linewidth = 0.2) +
+    scale_fill_manual(values = palette, name = "Pore class") +
+    labs(x = NULL, y = "Porosity (%)",
+         title = "Pore-size distribution (% of basis)") +
+    theme_bw(base_size = 12) +
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.minor = element_blank(),
+          legend.position = "top")
+  if (isTRUE(horiz)) g <- g + coord_flip()
+  g
+}
+
+# PSD plots (volume)
+plot_pore_classes_volume <- function(psd_df, id_col = NULL,
+                                     horiz = FALSE,
+                                     palette = c("#1f77b4", "#ff7f0e", "#2ca02c")) {
+  stopifnot(is.data.frame(psd_df))
+  if (is.null(id_col) || !(id_col %in% names(psd_df))) {
+    id_col <- "ID"
+    psd_df$ID <- "All"
+  }
+  stopifnot(all(c(id_col, "theta_macro","theta_meso","theta_micro") %in% names(psd_df)))
+
+  id_vals <- psd_df[[id_col]]
+  df_macro <- setNames(
+    data.frame(id_vals, "Macro (>1000 \u00B5m)", psd_df[["theta_macro"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  df_meso <- setNames(
+    data.frame(id_vals, "Meso (10\u20131000 \u00B5m)", psd_df[["theta_meso"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  df_micro <- setNames(
+    data.frame(id_vals, "Micro (<10 \u00B5m)", psd_df[["theta_micro"]], check.names = FALSE),
+    c(id_col, "class", "value")
+  )
+  long_df  <- rbind(df_macro, df_meso, df_micro)
+  long_df[["class"]] <- factor(long_df[["class"]],
+                               levels = c("Macro (>1000 \u00B5m)", "Meso (10\u20131000 \u00B5m)", "Micro (<10 \u00B5m)"))
+
+  g <- ggplot(
+    long_df,
+    aes(x = .data[[id_col]], y = .data[["value"]], fill = .data[["class"]])
+  ) +
+    geom_col(width = 0.75, color = "grey20", linewidth = 0.2) +
+    scale_fill_manual(values = palette, name = "Pore class") +
+    labs(x = NULL, y = expression(paste("Porosity (", m^3, " ", m^{-3}, ")")),
+         title = "Pore-size distribution (volumes)") +
+    theme_bw(base_size = 12) +
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.minor = element_blank(),
+          legend.position = "top")
+  if (isTRUE(horiz)) g <- g + coord_flip()
+  g
+}
+
+# =========================================================
+# ===============  APP HELPERS (I/O, UI)  =================
+# =========================================================
+
 read_any <- function(path, type = c("auto","csv","excel")) {
   type <- match.arg(type)
   ext <- tolower(tools::file_ext(path))
@@ -36,21 +467,84 @@ read_any <- function(path, type = c("auto","csv","excel")) {
   df
 }
 
-# unit converter (match your package’s internal behavior)
-.to_kPa <- function(x, units = c("kPa","hPa")) {
-  units <- match.arg(units)
-  if (units == "kPa") x else x/10
-}
-
-# ---- UI ----
+# ---------------- UI ----------------
 ui <- fluidPage(
-  titlePanel("Van Genuchten Fitter"),
+  # --- Light CSS to improve look without extra packages ---
+  tags$head(tags$style(HTML("
+    .auburn-banner {
+      background: linear-gradient(90deg,#0C2340 0%, #13294B 40%, #0C2340 100%);
+      color: #fff; padding: 18px 20px; margin: -16px -16px 16px -16px;
+      border-bottom: 4px solid #E87722;
+    }
+    .auburn-banner .subtitle { opacity: .9; font-size: 14.5px; }
+    .auburn-badge {
+      display:inline-block; padding:4px 8px; margin-left:10px;
+      background:#E87722; color:#fff; border-radius:6px; font-weight:600; font-size:12px;
+    }
+    .soft-card {
+      background:#fafafa; border:1px solid #e6e6e6; border-radius:8px; padding:12px 16px;
+    }
+    .soft-note {
+      background:#f7fbff; border:1px solid #d6e9f8; border-radius:8px; padding:10px 12px; color:#0C2340;
+    }
+    .footer {
+      margin-top: 18px; padding: 12px 0; color:#5f6a74; font-size: 12.5px; border-top: 1px solid #e6e6e6;
+    }
+    .tab-pane h4 { margin-top: 4px; }
+    .shiny-output-error-validation { color: #c62828; font-weight: 600; }
+  "))),
+
+  # --- Auburn-styled banner w/ authors & link to package ---
+  # --- Auburn-styled banner w/ authors & link to package ---
+  div(
+    class = "auburn-banner",
+    style = "display:flex; align-items:center; gap:15px;",
+
+    # Logo (make it bigger)
+    tags$img(
+      src = "auburn_logo.png",   # file in /www folder
+      height = "70px",           # adjust size here
+      alt = "Auburn University"
+    ),
+
+    # Title + subtitle stacked
+    div(
+      style = "display:flex; flex-direction:column; justify-content:center;",
+      h2(
+        style = "margin:0; display:flex; align-items:flex-end; gap:10px;",
+        "SoilHydro — Van Genuchten WRC Fitter",
+      ),
+      div(
+        class = "subtitle",
+        HTML(paste0(
+          "<b>Authors:</b> Erick Gutierrez &amp; Andre da Silva · ",
+          "<b>R package:</b> <a href='https://egubens.github.io/SoilHydro/index.html' target='_blank' style='color:#FFD39B;text-decoration:underline;'>SoilHydro website</a>"
+        ))
+      )
+    )
+  ),
+
+  # --- Short description under banner ---
+  div(
+    class = "soft-card",
+    HTML("
+    <p style='margin:0;'>
+    This app fits <b>Van Genuchten</b> water retention curves (Mualem form, m = 1 − 1/n),
+    summarizes hydrophysical metrics (θ at 10 &amp; 1500 kPa, AWC), and partitions porosity
+    into macro/meso/micro classes. Upload CSV/Excel, map columns, choose units, and click
+    <b>Fit Van Genuchten</b>. Explore fitted curves, derived tables, and pore-size plots.
+    </p>
+  ")
+  ),
+
+
+  br(),
 
   sidebarLayout(
     sidebarPanel(
+      h4("Data & settings"),
       fileInput("file", "Upload data (.csv or .xlsx)", accept = c(".csv", ".xlsx", ".xls")),
-      helpText("Your data should have at least two columns: water content (theta) and suction (kPa or hPa).
-               The ID/treatment column is optional."),
+      helpText("Required: θ (volumetric water content) and suction (h, kPa or hPa); optional ID/treatment column."),
 
       radioButtons("file_type", "File type",
                    choices = c("Auto-detect" = "auto",
@@ -61,15 +555,20 @@ ui <- fluidPage(
       hr(),
       uiOutput("colmap_ui"),
 
-      radioButtons("units", "Suction units in your file",
-                   choices = c("kPa", "hPa"),
-                   selected = "hPa", inline = TRUE),
+      radioButtons("units", "Suction units in your file", inline = TRUE,
+                   choices = c("kPa", "hPa"), selected = "hPa"),
 
       checkboxInput("one_id_only", "Fit only one ID (optional)", value = FALSE),
       uiOutput("one_id_select"),
 
+      br(),
       actionButton("fit_btn", "Fit Van Genuchten", class = "btn-primary"),
+      br(), br(),
+      div(class="soft-note",
+          HTML("Tip: Log x-axis ignores zeros. Ensure non-zero suctions for plotting.")
+      ),
       hr(),
+      h4("Downloads"),
       downloadButton("download_fits", "Download fits CSV"),
       br(), br(),
       downloadButton("download_pred", "Download predictions CSV")
@@ -79,25 +578,26 @@ ui <- fluidPage(
       tabsetPanel(
         tabPanel("Fits table",
                  br(),
+                 uiOutput("fit_summary_msg"),
                  tableOutput("fits_tbl"),
-                 br(),
-                 uiOutput("fit_summary_msg")
+                 br()
         ),
         tabPanel("Plot WRC",
                  br(),
                  uiOutput("plot_id_picker"),
                  checkboxInput("fixed_range", "Use fixed predicted range (0–1600 kPa)", value = FALSE),
                  helpText("If units = hPa, the fixed range is 0–16000 hPa. Log x-axis ignores zeros."),
-                 div(style="max-width: 820px;",
-                     plotOutput("wrc_plot", height = 420))
+                 div(style="max-width: 880px;",
+                     plotOutput("wrc_plot", height = 440))
         ),
         tabPanel("Derived tables",
                  br(),
-                 h4("Water points (θ at FC=10 kPa and PWP=1500 kPa, plus AWC)"),
+                 h4("Water points & AWC"),
+                 helpText("θ(10 kPa) ~ Field capacity; θ(1500 kPa) ~ Permanent wilting point; AWC = θ(10) − θ(1500)."),
                  tableOutput("wp_tbl"),
                  br(),
-                 h4("Pore-size classes (macro/meso/micro)"),
-                 helpText("Basis = θs, residual included in micro by default."),
+                 h4("Pore-size classes"),
+                 helpText(HTML("Macro = θ<sub>s</sub> − θ(10 kPa); Meso = θ(10) − θ(1500); Micro = θ(1500) − θ<sub>r</sub> (includes residual).")),
                  tableOutput("psd_tbl")
         ),
         tabPanel("Pore-size plots",
@@ -107,27 +607,53 @@ ui <- fluidPage(
                                           "Volume stacked bars"     = "vol"),
                               selected = "pct"),
                  checkboxInput("psd_horiz", "Horizontal bars", value = FALSE),
-                 div(style="max-width: 820px;",
-                     plotOutput("psd_plot", height = 420))
+                 div(style="max-width: 880px;",
+                     plotOutput("psd_plot", height = 440))
         ),
-        tabPanel("Help",
+        tabPanel("About",
                  br(),
+                 h4("SoilHydro R package"),
+                 HTML("
+                   <p>
+                   This web app accompanies the <b>SoilHydro</b> R package for soil water retention analysis.
+                   Visit the package site: <a href='https://egubens.github.io/SoilHydro/index.html' target='_blank'>egubens.github.io/SoilHydro</a>.
+                   </p>
+                 "),
+                 h4("Model & assumptions"),
                  tags$ul(
-                   tags$li("Upload CSV or Excel (.xlsx)."),
-                   tags$li("Map your columns: ID (optional), theta, and suction (h)."),
-                   tags$li("Pick the correct units (kPa or hPa)."),
-                   tags$li("Click 'Fit Van Genuchten' to compute parameters per ID (or a single ID)."),
-                   tags$li("Use the WRC Plot tab to visualize observed vs fitted curves."),
-                   tags$li("Toggle 'Use fixed predicted range' to draw the curve from 0–1600 kPa (or 0–16000 hPa)."),
-                   tags$li("See derived tables for water points and pore-size classes, and the Pore-size plots tab for visuals.")
-                 )
+                   tags$li(HTML("Van Genuchten–Mualem model with <i>m</i> = 1 − 1/<i>n</i>.")),
+                   tags$li("Least-squares fitting with L-BFGS-B bounds to ensure parameter plausibility."),
+                   tags$li("Suctions standardized internally to kPa; choose the correct units for your input file."),
+                   tags$li(HTML("Porosity partition uses capillary equivalence: Macro > 1000 μm, Meso 10–1000 μm, Micro < 10 μm.")),
+                   tags$li("AWC derived using θ at 10 and 1500 kPa by default (customizable in code).")
+                 ),
+                 h4("Attribution"),
+                 HTML("
+                   <p style='margin-bottom:6px;'>
+                     <b>Authors:</b> Erick Gutierrez &amp; Andre da Silva<br/>
+                     <b>Affiliation:</b> Auburn University
+                   </p>
+                 "),
+                 h4("How to cite"),
+                 HTML("
+                   <p class='soft-card' style='margin-top:6px;'>
+                     Gutierrez, E., &amp; da Silva, A. (2025). <i>SoilHydro:</i> Tools for Van Genuchten water retention curves and pore-size partitioning in R.
+                     R package and web application. Auburn University. Available at:
+                     <a href='https://egubens.github.io/SoilHydro/index.html' target='_blank'>https://egubens.github.io/SoilHydro/</a>
+                   </p>
+                 ")
         )
+      ),
+      div(class="footer",
+          HTML(paste0("© ", format(Sys.Date(), "%Y"),
+                      " SoilHydro · Auburn University · Contact: ",
+                      "<a href='mailto:edg0030@auburn.edu'>edg0030@auburn.edu</a>"))
       )
     )
   )
 )
 
-# ---- SERVER ----
+# --------------- SERVER ---------------
 server <- function(input, output, session) {
 
   # Raw data
@@ -142,7 +668,7 @@ server <- function(input, output, session) {
     cols <- names(df)
     tagList(
       selectInput("id_col",   "ID / Treatment column (optional)", choices = c("None" = "", cols), selected = ""),
-      selectInput("theta_col","θ (volumetric water content)",     choices = cols),
+      selectInput("theta_col","\u03B8 (volumetric water content)", choices = cols),
       selectInput("h_col",    "Suction column (h)",               choices = cols)
     )
   })
@@ -159,7 +685,7 @@ server <- function(input, output, session) {
     }
   })
 
-  # Fitting
+  # Run fits
   fits_reactive <- eventReactive(input$fit_btn, {
     df <- raw_data()
     validate(
@@ -187,12 +713,13 @@ server <- function(input, output, session) {
     list(fits=fits, id_col=if (is.null(id_arg)) "ID" else id_arg, id_value=id_value)
   }, ignoreInit = TRUE)
 
-  # Tables
+  # Fits table
   output$fits_tbl <- renderTable({
     fr <- fits_reactive(); req(fr)
     fr$fits
   }, striped = TRUE, bordered = TRUE, spacing = "s")
 
+  # Summary message
   output$fit_summary_msg <- renderUI({
     fr <- fits_reactive(); req(fr)
     ok <- fr$fits$.fit_ok %in% TRUE
@@ -230,7 +757,7 @@ server <- function(input, output, session) {
   )
   psd_x45 <- theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-  # Plot WRC
+  # WRC plot
   output$wrc_plot <- renderPlot({
     fr <- fits_reactive(); req(fr)
     df <- raw_data()
@@ -322,7 +849,7 @@ server <- function(input, output, session) {
     }
   )
 
-  # Download predictions with custom grid
+  # Download predictions with custom kPa grid
   preds_fixed_reactive <- reactive({
     fr <- fits_reactive(); req(fr)
     fits <- fr$fits; id_col <- fr$id_col

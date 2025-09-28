@@ -2,7 +2,6 @@
 title: "SoilHydro: Van Genuchten Water Retention Curve Tools"
 subtitle: "Fitting, Diagnostics, Hydrophysical Metrics, and Visualization"
 author: "Erick Gutierrez / Auburn University"
-date: "`r format(Sys.time(), '%Y-%m-%d')`"
 output:
   html_vignette:
     toc: true
@@ -37,6 +36,18 @@ knitr::opts_chunk$set(
 - and provides clean **ggplot2** visualizations for curves and pore-size bars.
 
 We assume familiarity with basic soil physics concepts (\( \theta_r, \theta_s, \alpha, n, m \)) and laboratory WRC data.
+
+---
+
+## Live web app
+
+You can try **all SoilHydro functions interactively in your browser**—no installation needed:
+
+👉 [SoilHydro Shiny web app](https://3n0c6z-erick-gutierrez.shinyapps.io/SoilHydro/)
+
+The app mirrors the package workflow (fitting, prediction, water points, pore-size classes, and visualization).
+
+---
 
 ```{r pkg-versions, include=FALSE}
 sessionInfo()

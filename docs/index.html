@@ -65,6 +65,8 @@
 
       </header><div class="row">
   <div class="contents col-md-9">
+
+
 <div class="section level1">
 <div class="page-header"><h1 id="soilhydro--van-genuchten-water-retention-curve-tools">
 <strong>SoilHydro</strong> — Van Genuchten Water Retention Curve Tools<a class="anchor" aria-label="anchor" href="#soilhydro--van-genuchten-water-retention-curve-tools"></a>
@@ -78,7 +80,14 @@
 <li>🧰 <strong>Plotting</strong>: One WRC plot per treatment; pore-size stacked bars (percent or volume)</li>
 </ul>
 <hr>
+<div class="section level2">
+<h2 id="live-web-app">Live web app<a class="anchor" aria-label="anchor" href="#live-web-app"></a>
+</h2>
+<p>You can use all <strong>SoilHydro</strong> functions in your browser—no installation needed:</p>
+<p>👉 <a href="https://3n0c6z-erick-gutierrez.shinyapps.io/SoilHydro/" class="external-link">SoilHydro Web App</a></p>
+<p>The app mirrors the package workflow (fitting, prediction, water points, and pore-size plots).</p>
 <hr>
+</div>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
@@ -100,11 +109,9 @@
 <p>Below we <strong>simulate realistic WRC data</strong> for three treatments using the Van Genuchten model, sample common suction points in <strong>hPa</strong>, add small measurement noise, and then run the full workflow.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">SoilHydro</span><span class="op">)</span></span>
-<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://ggplot2.tidyverse.org" class="external-link">ggplot2</a></span><span class="op">)</span></span></code></pre></div>
-<div class="sourceCode" id="cb3"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="do">## Warning: package 'ggplot2' was built under R version 4.3.3</span></span></code></pre></div>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">42</span><span class="op">)</span></span></code></pre></div>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://ggplot2.tidyverse.org" class="external-link">ggplot2</a></span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">42</span><span class="op">)</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># --------- 1) Define "true" VG parameters per treatment (kPa units) ---------</span></span>
 <span><span class="va">true_params</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
 <span>  Control     <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>theta_r <span class="op">=</span> <span class="fl">0.05</span>, theta_s <span class="op">=</span> <span class="fl">0.42</span>, alpha <span class="op">=</span> <span class="fl">0.030</span>, n <span class="op">=</span> <span class="fl">1.42</span><span class="op">)</span>,</span>
@@ -126,14 +133,14 @@
 <span><span class="va">df</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/do.call.html" class="external-link">do.call</a></span><span class="op">(</span><span class="va">rbind</span>, <span class="va">sim_rows</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">df</span><span class="op">)</span></span></code></pre></div>
-<div class="sourceCode" id="cb6"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="do">##   Product hPa     theta</span></span>
-<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="do">## 1 Control   1 0.4200000</span></span>
-<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="do">## 2 Control  10 0.4158624</span></span>
-<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="do">## 3 Control  30 0.4186704</span></span>
-<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="do">## 4 Control  50 0.4167058</span></span>
-<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a><span class="do">## 5 Control  75 0.4102049</span></span>
-<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a><span class="do">## 6 Control 100 0.4016040</span></span></code></pre></div>
-<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb4"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="do">##   Product hPa     theta</span></span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="do">## 1 Control   1 0.4200000</span></span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="do">## 2 Control  10 0.4158624</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="do">## 3 Control  30 0.4186704</span></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="do">## 4 Control  50 0.4167058</span></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="do">## 5 Control  75 0.4102049</span></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="do">## 6 Control 100 0.4016040</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># --------- 4) Fit Van Genuchten per treatment (note: units = 'hPa') ---------</span></span>
 <span><span class="va">fits</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/vg_fit_optim.html">vg_fit_optim</a></span><span class="op">(</span></span>
 <span>  data  <span class="op">=</span> <span class="va">df</span>,</span>
@@ -143,15 +150,15 @@
 <span>  units <span class="op">=</span> <span class="st">"hPa"</span></span>
 <span><span class="op">)</span></span>
 <span><span class="va">fits</span></span></code></pre></div>
-<div class="sourceCode" id="cb8"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="do">##       Product .fit_ok     theta_r   theta_s      alpha        n         m</span></span>
-<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="do">## 1 ArtiMicro05    TRUE 0.008167154 0.4355989 0.10356957 1.503640 0.3349473</span></span>
-<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a><span class="do">## 2     Control    TRUE 0.047765797 0.4197565 0.02607172 1.439453 0.3052918</span></span>
-<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a><span class="do">## 3   Persist10    TRUE 0.018931801 0.4644555 0.07194008 1.429538 0.3004731</span></span>
-<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="do">##          R2        RMSE</span></span>
-<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="do">## 1 0.9972856 0.007207470</span></span>
-<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a><span class="do">## 2 0.9975671 0.004956925</span></span>
-<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a><span class="do">## 3 0.9989176 0.004382912</span></span></code></pre></div>
-<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb6"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="do">##       Product .fit_ok     theta_r   theta_s      alpha        n         m</span></span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="do">## 1 ArtiMicro05    TRUE 0.008167154 0.4355989 0.10356957 1.503640 0.3349473</span></span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="do">## 2     Control    TRUE 0.047765797 0.4197565 0.02607172 1.439453 0.3052918</span></span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="do">## 3   Persist10    TRUE 0.018931801 0.4644555 0.07194008 1.429538 0.3004731</span></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="do">##          R2        RMSE</span></span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a><span class="do">## 1 0.9972856 0.007207470</span></span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a><span class="do">## 2 0.9975671 0.004956925</span></span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a><span class="do">## 3 0.9989176 0.004382912</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># --------- 5) Plot WRC per treatment (log10 x-axis) ---------</span></span>
 <span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/plot_vg_fits.html">plot_vg_fits</a></span><span class="op">(</span></span>
 <span>  data      <span class="op">=</span> <span class="va">df</span>,</span>
@@ -168,15 +175,15 @@
 Observed vs fitted WRC for one treatment (Control).
 </p>
 </div>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># --------- 6) Water points: FC at 10 kPa, PWP at 1500 kPa ---------</span></span>
 <span><span class="va">wp</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/vg_water_points.html">vg_water_points</a></span><span class="op">(</span><span class="va">fits</span>, id_col <span class="op">=</span> <span class="st">"Product"</span>, fc_kPa <span class="op">=</span> <span class="fl">10</span>, pwp_kPa <span class="op">=</span> <span class="fl">1500</span><span class="op">)</span></span>
 <span><span class="va">wp</span></span></code></pre></div>
-<div class="sourceCode" id="cb11"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="do">##       Product  theta_fc  theta_pwp       AWC</span></span>
-<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="do">## 1 ArtiMicro05 0.3440217 0.04183028 0.3021914</span></span>
-<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="do">## 2     Control 0.4047486 0.12191947 0.2828291</span></span>
-<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="do">## 3   Persist10 0.4040153 0.07855736 0.3254580</span></span></code></pre></div>
-<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="do">##       Product  theta_fc  theta_pwp       AWC</span></span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a><span class="do">## 1 ArtiMicro05 0.3440217 0.04183028 0.3021914</span></span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a><span class="do">## 2     Control 0.4047486 0.12191947 0.2828291</span></span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="do">## 3   Persist10 0.4040153 0.07855736 0.3254580</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># --------- 7) Pore-size classes (macro/meso/micro) + stacked bar plots ---------</span></span>
 <span><span class="va">psd</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/vg_pore_classes.html">vg_pore_classes</a></span><span class="op">(</span></span>
 <span>  <span class="va">fits</span>,</span>
@@ -193,7 +200,7 @@ Observed vs fitted WRC for one treatment (Control).
 Pore-size classes from VG fits.
 </p>
 </div>
-<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">g_vol</span></span></code></pre></div>
 <div class="figure" style="text-align: center">
 <img src="reference/figures/README-psd-plots-2.png" alt="Pore-size distribution: percent (left) and volume (right) stacked bars by treatment." width="100%"><p class="caption">
@@ -274,6 +281,7 @@ Pore-size classes from VG fits.
 <p>MIT © Erick Gutierrez / Auburn University</p>
 </div>
 </div>
+
   </div>
 
   <div class="col-md-3 hidden-xs hidden-sm" id="pkgdown-sidebar">
@@ -297,12 +305,17 @@ Pore-size classes from VG fits.
 <div class="developers">
 <h2 data-toc-skip>Developers</h2>
 <ul class="list-unstyled">
-<li>Gutierrez Erick <br><small class="roles"> Author, maintainer </small>  </li>
-<li>Da Silva Andre <br><small class="roles"> Author </small>  </li>
+<li>Gutierrez Erick <br><small class="roles"> Author, maintainer </small>   </li>
+<li>Da Silva Andre <br><small class="roles"> Author </small>   </li>
 </ul>
 </div>
 
-
+<div class="dev-status">
+<h2 data-toc-skip>Dev status</h2>
+<ul class="list-unstyled">
+<li><a href="https://3n0c6z-erick-gutierrez.shinyapps.io/SoilHydro/" class="external-link"><img src="https://img.shields.io/badge/Live%20app-SoilHydro-blue" alt="Live app"></a></li>
+</ul>
+</div>
 
   </div>
 </div>
@@ -315,7 +328,7 @@ Pore-size classes from VG fits.
 
 <div class="pkgdown">
   <p></p>
-<p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+<p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.3.</p>
 </div>
 
       </footer>

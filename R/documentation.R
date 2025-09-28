@@ -416,25 +416,30 @@ vg_water_points <- function(params_df,
 #'
 #' @description Partitions porosity into three classes using capillary theory:
 #'   \itemize{
-#'     \item Macro: \eqn{d >} \code{d_macro_um} (default 1000 µm)
-#'     \item Meso: \eqn{d \in} [\code{d_micro_um}, \code{d_macro_um}] (default 10–1000 µm)
-#'     \item Micro: \eqn{d <} \code{d_micro_um} (default 10 µm)
+#'     \item Macro: pores with diameter greater than \code{d_macro_um} (default 1000 um)
+#'     \item Meso: pores with diameter between \code{d_micro_um} and \code{d_macro_um} (default 10--1000 um)
+#'     \item Micro: pores with diameter less than \code{d_micro_um} (default 10 um)
 #'   }
-#'   By default, residual water \eqn{\theta_r} is included in the micro class so that
-#'   macro + meso + micro \eqn{\approx \theta_s} and percentage bars (basis = \code{"theta_s"})
-#'   reach 100%.
-#' @param params_df Output of \code{\link{vg_fit_optim}}.
+#'   By default, residual water \eqn{\\theta_r} is included in the micro class so that
+#'   macro + meso + micro \eqn{\\approx \\theta_s} and percentage bars
+#'   (basis = \code{"theta_s"}) sum to 100\%.
+#'
+#' @param params_df Output of \code{vg_fit_optim()}.
 #' @param id_col Name of the ID column in \code{params_df}. Defaults to the first column.
-#' @param d_micro_um,d_macro_um Diameter cutoffs (µm).
-#' @param gamma Surface tension of water (N/m), default ~0.0728 at 20 °C.
+#' @param d_micro_um,d_macro_um Diameter cutoffs in micrometers (um).
+#' @param gamma Surface tension of water (N/m), default ~0.0728 at 20 degrees C.
 #' @param cos_theta_c Contact angle term (dimensionless), default 1.
-#' @param percent_basis Either \code{"theta_s"} (total porosity) or \code{"available"} (\eqn{\theta_s-\theta_r}).
-#' @param include_residual_in_micro Logical; if \code{TRUE} (default), micro includes \eqn{\theta_r}.
-#' @param return_residual Logical; if \code{TRUE}, appends \code{theta_residual} and \code{pct_residual}.
-#' @param filter_id Optional scalar to compute **only one product** from \code{params_df}.
-#' @return \code{data.frame} with columns
-#'   \code{<ID>, theta_macro, theta_meso, theta_micro, pct_macro, pct_meso, pct_micro, theta_r, theta_s}
-#'   (and optional residual columns).
+#' @param percent_basis Either \code{"theta_s"} (total porosity) or \code{"available"}
+#'   (i.e., \eqn{\\theta_s - \\theta_r}).
+#' @param include_residual_in_micro If \code{TRUE} (default), the micro class includes \eqn{\\theta_r}.
+#' @param return_residual If \code{TRUE}, also returns \code{theta_residual} and \code{pct_residual}.
+#' @param filter_id Optional scalar to compute results for a single ID (rows where
+#'   \code{params_df[[id_col]] == filter_id}).
+#' @return A \code{data.frame} with columns:
+#'   \code{<ID>}, \code{theta_macro}, \code{theta_meso}, \code{theta_micro},
+#'   \code{pct_macro}, \code{pct_meso}, \code{pct_micro}, \code{theta_r}, \code{theta_s}
+#'   (and residual columns if requested).
+
 #' @examples
 #' # Using 'fits' from vg_fit_optim():
 #' # Percent basis = theta_s (default). Residual water included in "micro".
