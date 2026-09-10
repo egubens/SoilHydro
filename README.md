@@ -252,6 +252,11 @@ Pull requests and issues are welcome! Please include:
 - if relevant, your data snippet (or a simulated equivalent).
 
 ------------------------------------------------------------------------
+##  Acknowledgments
+
+Financial support for this work was provided by the United States Department of Agriculture - Agricultural Research Service under a non-assistance cooperative agreement (58-6010-2-005).
+
+------------------------------------------------------------------------
 
 ## License
 
