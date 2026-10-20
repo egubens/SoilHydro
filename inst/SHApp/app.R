@@ -923,7 +923,7 @@ server <- function(input, output, session) {
       save_wrc_figure(wrc_plot_reactive(), file, input$figure_format,
                       width_mm, height_mm, dpi = 600)
     }
-  })
+  )
 
   # Water points
   output$wp_tbl <- renderTable({
