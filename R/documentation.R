@@ -116,6 +116,9 @@ vg_fit_optim <- function(data, id = NULL, id_value = NULL, theta, h,
   h_vals_raw <- data[[h]]
   h_vals <- .to_kPa(h_vals_raw, units)
   ok <- is.finite(theta_vals) & is.finite(h_vals)
+  if (any(h_vals[ok] < 0)) {
+    stop("Use non-negative suction magnitudes (e.g., 10 kPa for a matric potential of -10 kPa).")
+  }
   theta_vals <- theta_vals[ok]
   h_vals <- h_vals[ok]
 
@@ -130,7 +133,7 @@ vg_fit_optim <- function(data, id = NULL, id_value = NULL, theta, h,
   split_idx <- split(seq_along(ids), ids)
   out_list <- lapply(names(split_idx), function(gid) {
     idx <- split_idx[[gid]]
-    h_g  <- h_vals[idx]; h_g[h_g <= 0] <- 1e-6
+    h_g  <- h_vals[idx]  # h = 0 is valid: the VG model evaluates exactly to theta_s.
     th_g <- theta_vals[idx]
     if (!length(h_g) || !length(th_g)) {
       return(data.frame(.fit_ok = FALSE, row.names = NULL))
@@ -243,10 +246,20 @@ vg_predict <- function(params_df, id_col = NULL, new_h, units = c("kPa","hPa"), 
 #' @param id_value Optional scalar to plot **only one product** (rows where \code{data[[id]] == id_value}).
 #'   Ignored if \code{id} is \code{NULL}.
 #' @param units Units of the suction column in \code{data}: "kPa" or "hPa".
-#' @param log_x Logical; draw x-axis on log10 scale.
+#' @param log_x Logical; draw x-axis on log10 scale when \code{x_scale=NULL}.
 #' @param points Integer; number of points for the smooth VG curve.
+#' @param x_scale Optional axis type: \code{"pseudo_log"}, \code{"log10"} or
+#'   \code{"linear"}. Overrides \code{log_x}. Pseudo-log includes saturation at
+#'   zero and uses a linear transition scale of 0.1 kPa (1 hPa).
+#' @param h_range Optional increasing, non-negative length-two vector giving the
+#'   prediction range in \code{units}. Defaults to the observed range.
+#' @details Keep saturation observations at \eqn{h=0}; do not replace zeros by
+#'   tiny positive values for plotting. Choose \code{x_scale="pseudo_log"} to
+#'   display them. A strict log10 axis omits zero with a warning. Axis transforms
+#'   affect display only; predictions are evaluated at untransformed suction.
 #' @return Named list of ggplot objects, one per ID (or a single plot if only one ID).
 #' @import ggplot2
+#' @importFrom rlang .data
 #' @examples
 #' ## Plot observed vs fitted curves per ID
 #' ## Not run on CRAN to keep checks fast.
@@ -268,93 +281,130 @@ vg_predict <- function(params_df, id_col = NULL, new_h, units = c("kPa","hPa"), 
 #' @export
 plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
                          units = c("kPa","hPa"),
-                         log_x = TRUE, points = 400) {
+                         log_x = TRUE, points = 400,
+                         x_scale = NULL, h_range = NULL) {
   units <- match.arg(units)
-  stopifnot(theta %in% names(data), h %in% names(data))
+  if (is.null(x_scale)) x_scale <- if (isTRUE(log_x)) "log10" else "linear"
+  x_scale <- match.arg(x_scale, c("pseudo_log", "log10", "linear"))
+  stopifnot(theta %in% names(data), h %in% names(data),
+            length(points) == 1L, is.finite(points), points >= 2,
+            points == as.integer(points))
+  if (!is.null(h_range)) {
+    stopifnot(is.numeric(h_range), length(h_range) == 2L,
+              all(is.finite(h_range)), all(h_range >= 0),
+              h_range[2] > h_range[1])
+  }
   if (!is.null(id)) {
     stopifnot(id %in% names(data))
     if (!is.null(id_value)) {
-      data <- data[data[[id]] == id_value, , drop = FALSE]
+      data <- data[!is.na(data[[id]]) & data[[id]] == id_value, , drop = FALSE]
       if (nrow(data) == 0) stop("No rows match id_value in the id column.")
     }
   }
 
-  # IDs
-  if (is.null(id)) {
-    ids <- rep(".all", nrow(data))
-    id_name <- "ID"
-  } else {
-    ids <- data[[id]]
-    id_name <- id
+  id_name <- if (is.null(id)) "ID" else id
+  ids <- if (is.null(id)) rep(".all", nrow(data)) else as.character(data[[id]])
+  finite <- is.finite(data[[theta]]) & is.finite(data[[h]])
+  if (any(data[[h]][finite] < 0)) {
+    stop("Use non-negative suction magnitudes (e.g., 10 kPa for a matric potential of -10 kPa).")
   }
-
-  # observed (positive h only for log axis)
-  ok <- is.finite(data[[theta]]) & is.finite(data[[h]]) & (data[[h]] > 0)
+  ok <- finite & !is.na(ids)
+  if (x_scale == "log10") {
+    if (any(data[[h]][ok] == 0)) {
+      warning("Saturation (h = 0) is omitted on a strict log10 axis; use x_scale = 'pseudo_log' to include it.",
+              call. = FALSE)
+    }
+    ok <- ok & data[[h]] > 0
+  }
   d2 <- data[ok, c(h, theta), drop = FALSE]
   d2[[id_name]] <- ids[ok]
+  if (!nrow(d2)) stop("No observations to plot on this axis; use x_scale = 'pseudo_log' to include h = 0.")
 
-  # Optional: subset params_df to the same ID(s)
-  pf <- params_df
+  pf <- params_df[params_df$.fit_ok %in% TRUE, , drop = FALSE]
   if (!is.null(id) && !is.null(id_value)) {
-    pf <- pf[pf[[id_name]] == id_value & pf$.fit_ok == TRUE, , drop = FALSE]
+    pf <- pf[pf[[id_name]] == id_value, , drop = FALSE]
     if (!nrow(pf)) stop("No fitted parameters for the requested id_value.")
-  } else {
-    pf <- pf[pf$.fit_ok == TRUE, , drop = FALSE]
   }
 
-  # build predictions per ID over observed range
-  id_levels <- unique(d2[[id_name]])
-  preds_list <- lapply(id_levels, function(gid) {
-    di <- d2[d2[[id_name]] == gid, , drop = FALSE]
-    hmin <- suppressWarnings(min(di[[h]], na.rm = TRUE))
-    hmax <- suppressWarnings(max(di[[h]], na.rm = TRUE))
-    if (!is.finite(hmin) || !is.finite(hmax) || hmax <= 0) return(NULL)
-    hseq <- 10^(seq(log10(max(hmin, if (units=="kPa") 1e-6 else 1e-5)),
-                    log10(hmax), length.out = points))
-
-    r <- pf[pf[[id_name]] == gid, , drop = FALSE]
-    if (!nrow(r)) {
-      # Handle single-group (id=NULL) case where params_df has column "ID"
-      if (is.null(id) && id_name == "ID" && any(pf[[id_name]] == ".all")) {
-        r <- pf[pf[[id_name]] == ".all", , drop = FALSE]
-      }
-      if (!nrow(r)) return(NULL)
+  # The transition is the same physical suction in either display unit.
+  sigma <- .from_kPa(0.1, units)
+  x_trans <- switch(x_scale,
+    pseudo_log = scales::pseudo_log_trans(sigma = sigma, base = 10),
+    log10 = scales::log10_trans(),
+    linear = scales::identity_trans()
+  )
+  x_breaks <- if (x_scale == "pseudo_log") {
+    function(limits) {
+      hi <- max(c(0, limits[is.finite(limits)]))
+      if (hi <= sigma) return(pretty(c(0, hi), n = 4))
+      c(0, 10^seq(floor(log10(sigma)), ceiling(log10(hi))))
     }
+  } else if (x_scale == "log10") {
+    scales::breaks_log(n = 6)
+  } else {
+    scales::breaks_pretty(n = 6)
+  }
+  axis_note <- switch(x_scale,
+    pseudo_log = paste0("Zero-safe log axis (linear near 0; sigma = ", sigma, " ", units, ")."),
+    log10 = "Log10 suction axis; h = 0 cannot be displayed.",
+    linear = "Linear suction axis."
+  )
 
-    theta_hat <- vg_fun_kPa(.to_kPa(hseq, units),
-                            r[["theta_r"]][1], r[["theta_s"]][1],
-                            r[["alpha"]][1],   r[["n"]][1])
-    data.frame(ID = gid, h = hseq, theta = theta_hat, row.names = NULL)
-  })
-  preds <- do.call(rbind, preds_list)
-
-  # one plot per ID
+  id_levels <- unique(d2[[id_name]])
   plots <- setNames(vector("list", length(id_levels)), id_levels)
   for (gid in id_levels) {
     obs_i <- d2[d2[[id_name]] == gid, , drop = FALSE]
-    pre_i <- if (!is.null(preds)) preds[preds$ID == gid, , drop = FALSE] else NULL
+    r <- pf[!is.na(pf[[id_name]]) & pf[[id_name]] == gid, , drop = FALSE]
+    pre_i <- NULL
+    if (nrow(r)) {
+      bounds <- if (is.null(h_range)) range(obs_i[[h]]) else h_range
+      # A strict log axis has no zero. Use the smallest measured positive
+      # suction, rather than an arbitrary epsilon, for a range starting at 0.
+      if (x_scale == "log10" && bounds[1] == 0) {
+        positive <- obs_i[[h]][obs_i[[h]] > 0 & obs_i[[h]] <= bounds[2]]
+        bounds[1] <- if (length(positive)) min(positive) else min(sigma, bounds[2])
+      }
+      hseq <- x_trans$inverse(seq(x_trans$transform(bounds[1]),
+                                 x_trans$transform(bounds[2]), length.out = points))
+      hseq <- pmax(hseq, 0)
+      hseq[c(1, points)] <- bounds
+      theta_hat <- vg_fun_kPa(.to_kPa(hseq, units),
+                              r$theta_r[1], r$theta_s[1], r$alpha[1], r$n[1])
+      pre_i <- data.frame(h = hseq, theta = theta_hat)
+    }
 
-    g <- ggplot2::ggplot() +
-      ggplot2::geom_point(
-        data = obs_i,
-        ggplot2::aes(x = .data[[h]], y = .data[[theta]]),
-        size = 2
-      ) +
-      (if (!is.null(pre_i) && nrow(pre_i) > 0)
-        ggplot2::geom_line(
-          data = pre_i,
-          ggplot2::aes(x = .data[["h"]], y = .data[["theta"]]),
-          linewidth = 0.9, color = "blue"
-        ) else NULL) +
+    fit_note <- NULL
+    if (nrow(r) && all(c("R2", "RMSE") %in% names(r))) {
+      fit_note <- sprintf("R² = %.3f    RMSE = %.4f", r$R2[1], r$RMSE[1])
+    }
+    plots[[gid]] <- ggplot2::ggplot() +
+      (if (!is.null(pre_i))
+        ggplot2::geom_line(data = pre_i,
+          ggplot2::aes(x = .data[["h"]], y = .data[["theta"]], linetype = "Fitted curve"),
+          linewidth = 0.9, color = "#0072B2") else NULL) +
+      ggplot2::geom_point(data = obs_i,
+        ggplot2::aes(x = .data[[h]], y = .data[[theta]], shape = "Observed"),
+        size = 2.1, stroke = 0.4, fill = "white", colour = "black") +
+      ggplot2::scale_shape_manual(name = NULL, values = c("Observed" = 21)) +
+      ggplot2::scale_linetype_manual(name = NULL, values = c("Fitted curve" = "solid")) +
+      ggplot2::guides(shape = ggplot2::guide_legend(order = 1),
+                       linetype = ggplot2::guide_legend(order = 2)) +
+      ggplot2::scale_x_continuous(trans = x_trans, breaks = x_breaks,
+        labels = scales::label_number(big.mark = ","),
+        expand = ggplot2::expansion(mult = c(0.02, 0.03))) +
       ggplot2::labs(
-        title = paste("Van Genuchten Fit -", gid),
-        x = paste0("Suction (", units, ")"),
-        y = expression(theta)
+        title = paste("Soil water retention -", gid),
+        subtitle = fit_note,
+        x = paste0("Matric suction (", units, ")"),
+        y = expression(paste("Volumetric water content (", m^3, " ", m^{-3}, ")")),
+        caption = axis_note
       ) +
-      ggplot2::theme_bw(base_size = 13)
-
-    if (isTRUE(log_x)) g <- g + ggplot2::scale_x_log10()
-    plots[[gid]] <- g
+      ggplot2::theme_classic(base_size = 12, base_family = "sans") +
+      ggplot2::theme(axis.text = ggplot2::element_text(colour = "black"),
+                     legend.position = "top", legend.justification = "left",
+                     legend.box = "horizontal", legend.title = ggplot2::element_blank(),
+                     plot.title = ggplot2::element_text(face = "bold"),
+                     plot.caption = ggplot2::element_text(hjust = 0, size = 9))
   }
   plots
 }
@@ -669,3 +719,4 @@ plot_pore_classes_volume <- function(psd_df, id_col = NULL,
   if (isTRUE(horiz)) g <- g + ggplot2::coord_flip()
   g
 }
+

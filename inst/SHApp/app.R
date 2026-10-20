@@ -60,6 +60,9 @@ vg_fit_optim <- function(data, id = NULL, id_value = NULL, theta, h,
   h_vals_raw <- data[[h]]
   h_vals <- .to_kPa(h_vals_raw, units)
   ok <- is.finite(theta_vals) & is.finite(h_vals)
+  if (any(h_vals[ok] < 0)) {
+    stop("Use non-negative suction magnitudes (e.g., 10 kPa for a matric potential of -10 kPa).")
+  }
   theta_vals <- theta_vals[ok]
   h_vals <- h_vals[ok]
 
@@ -74,7 +77,7 @@ vg_fit_optim <- function(data, id = NULL, id_value = NULL, theta, h,
   split_idx <- split(seq_along(ids), ids)
   out_list <- lapply(names(split_idx), function(gid) {
     idx <- split_idx[[gid]]
-    h_g  <- h_vals[idx]; h_g[h_g <= 0] <- 1e-6
+    h_g  <- h_vals[idx]  # h = 0 is valid: the VG model evaluates exactly to theta_s.
     th_g <- theta_vals[idx]
     if (!length(h_g) || !length(th_g)) {
       return(data.frame(.fit_ok = FALSE, row.names = NULL))
@@ -154,87 +157,130 @@ vg_predict <- function(params_df, id_col = NULL, new_h, units = c("kPa","hPa"), 
 # Plot observed & fitted curves
 plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
                          units = c("kPa","hPa"),
-                         log_x = TRUE, points = 400) {
+                         log_x = TRUE, points = 400,
+                         x_scale = NULL, h_range = NULL) {
   units <- match.arg(units)
-  stopifnot(theta %in% names(data), h %in% names(data))
+  if (is.null(x_scale)) x_scale <- if (isTRUE(log_x)) "log10" else "linear"
+  x_scale <- match.arg(x_scale, c("pseudo_log", "log10", "linear"))
+  stopifnot(theta %in% names(data), h %in% names(data),
+            length(points) == 1L, is.finite(points), points >= 2,
+            points == as.integer(points))
+  if (!is.null(h_range)) {
+    stopifnot(is.numeric(h_range), length(h_range) == 2L,
+              all(is.finite(h_range)), all(h_range >= 0),
+              h_range[2] > h_range[1])
+  }
   if (!is.null(id)) {
     stopifnot(id %in% names(data))
     if (!is.null(id_value)) {
-      data <- data[data[[id]] == id_value, , drop = FALSE]
+      data <- data[!is.na(data[[id]]) & data[[id]] == id_value, , drop = FALSE]
       if (nrow(data) == 0) stop("No rows match id_value in the id column.")
     }
   }
 
-  if (is.null(id)) {
-    ids <- rep(".all", nrow(data))
-    id_name <- "ID"
-  } else {
-    ids <- data[[id]]
-    id_name <- id
+  id_name <- if (is.null(id)) "ID" else id
+  ids <- if (is.null(id)) rep(".all", nrow(data)) else as.character(data[[id]])
+  finite <- is.finite(data[[theta]]) & is.finite(data[[h]])
+  if (any(data[[h]][finite] < 0)) {
+    stop("Use non-negative suction magnitudes (e.g., 10 kPa for a matric potential of -10 kPa).")
   }
-
-  ok <- is.finite(data[[theta]]) & is.finite(data[[h]]) & (data[[h]] > 0)
+  ok <- finite & !is.na(ids)
+  if (x_scale == "log10") {
+    if (any(data[[h]][ok] == 0)) {
+      warning("Saturation (h = 0) is omitted on a strict log10 axis; use x_scale = 'pseudo_log' to include it.",
+              call. = FALSE)
+    }
+    ok <- ok & data[[h]] > 0
+  }
   d2 <- data[ok, c(h, theta), drop = FALSE]
   d2[[id_name]] <- ids[ok]
+  if (!nrow(d2)) stop("No observations to plot on this axis; use x_scale = 'pseudo_log' to include h = 0.")
 
-  pf <- params_df
+  pf <- params_df[params_df$.fit_ok %in% TRUE, , drop = FALSE]
   if (!is.null(id) && !is.null(id_value)) {
-    pf <- pf[pf[[id_name]] == id_value & pf$.fit_ok == TRUE, , drop = FALSE]
+    pf <- pf[pf[[id_name]] == id_value, , drop = FALSE]
     if (!nrow(pf)) stop("No fitted parameters for the requested id_value.")
-  } else {
-    pf <- pf[pf$.fit_ok == TRUE, , drop = FALSE]
   }
 
-  id_levels <- unique(d2[[id_name]])
-  preds_list <- lapply(id_levels, function(gid) {
-    di <- d2[d2[[id_name]] == gid, , drop = FALSE]
-    hmin <- suppressWarnings(min(di[[h]], na.rm = TRUE))
-    hmax <- suppressWarnings(max(di[[h]], na.rm = TRUE))
-    if (!is.finite(hmin) || !is.finite(hmax) || hmax <= 0) return(NULL)
-    hseq <- 10^(seq(log10(max(hmin, if (units=="kPa") 1e-6 else 1e-5)),
-                    log10(hmax), length.out = points))
-
-    r <- pf[pf[[id_name]] == gid, , drop = FALSE]
-    if (!nrow(r)) {
-      if (is.null(id) && id_name == "ID" && any(pf[[id_name]] == ".all")) {
-        r <- pf[pf[[id_name]] == ".all", , drop = FALSE]
-      }
-      if (!nrow(r)) return(NULL)
+  # The transition is the same physical suction in either display unit.
+  sigma <- .from_kPa(0.1, units)
+  x_trans <- switch(x_scale,
+    pseudo_log = scales::pseudo_log_trans(sigma = sigma, base = 10),
+    log10 = scales::log10_trans(),
+    linear = scales::identity_trans()
+  )
+  x_breaks <- if (x_scale == "pseudo_log") {
+    function(limits) {
+      hi <- max(c(0, limits[is.finite(limits)]))
+      if (hi <= sigma) return(pretty(c(0, hi), n = 4))
+      c(0, 10^seq(floor(log10(sigma)), ceiling(log10(hi))))
     }
+  } else if (x_scale == "log10") {
+    scales::breaks_log(n = 6)
+  } else {
+    scales::breaks_pretty(n = 6)
+  }
+  axis_note <- switch(x_scale,
+    pseudo_log = paste0("Zero-safe log axis (linear near 0; sigma = ", sigma, " ", units, ")."),
+    log10 = "Log10 suction axis; h = 0 cannot be displayed.",
+    linear = "Linear suction axis."
+  )
 
-    theta_hat <- vg_fun_kPa(.to_kPa(hseq, units),
-                            r[["theta_r"]][1], r[["theta_s"]][1],
-                            r[["alpha"]][1],   r[["n"]][1])
-    data.frame(ID = gid, h = hseq, theta = theta_hat, row.names = NULL)
-  })
-  preds <- do.call(rbind, preds_list)
-
+  id_levels <- unique(d2[[id_name]])
   plots <- setNames(vector("list", length(id_levels)), id_levels)
   for (gid in id_levels) {
     obs_i <- d2[d2[[id_name]] == gid, , drop = FALSE]
-    pre_i <- if (!is.null(preds)) preds[preds$ID == gid, , drop = FALSE] else NULL
+    r <- pf[!is.na(pf[[id_name]]) & pf[[id_name]] == gid, , drop = FALSE]
+    pre_i <- NULL
+    if (nrow(r)) {
+      bounds <- if (is.null(h_range)) range(obs_i[[h]]) else h_range
+      # A strict log axis has no zero. Use the smallest measured positive
+      # suction, rather than an arbitrary epsilon, for a range starting at 0.
+      if (x_scale == "log10" && bounds[1] == 0) {
+        positive <- obs_i[[h]][obs_i[[h]] > 0 & obs_i[[h]] <= bounds[2]]
+        bounds[1] <- if (length(positive)) min(positive) else min(sigma, bounds[2])
+      }
+      hseq <- x_trans$inverse(seq(x_trans$transform(bounds[1]),
+                                 x_trans$transform(bounds[2]), length.out = points))
+      hseq <- pmax(hseq, 0)
+      hseq[c(1, points)] <- bounds
+      theta_hat <- vg_fun_kPa(.to_kPa(hseq, units),
+                              r$theta_r[1], r$theta_s[1], r$alpha[1], r$n[1])
+      pre_i <- data.frame(h = hseq, theta = theta_hat)
+    }
 
-    g <- ggplot() +
-      geom_point(
-        data = obs_i,
-        aes(x = .data[[h]], y = .data[[theta]]),
-        size = 2
+    fit_note <- NULL
+    if (nrow(r) && all(c("R2", "RMSE") %in% names(r))) {
+      fit_note <- sprintf("R² = %.3f    RMSE = %.4f", r$R2[1], r$RMSE[1])
+    }
+    plots[[gid]] <- ggplot2::ggplot() +
+      (if (!is.null(pre_i))
+        ggplot2::geom_line(data = pre_i,
+          ggplot2::aes(x = .data[["h"]], y = .data[["theta"]], linetype = "Fitted curve"),
+          linewidth = 0.9, color = "#0072B2") else NULL) +
+      ggplot2::geom_point(data = obs_i,
+        ggplot2::aes(x = .data[[h]], y = .data[[theta]], shape = "Observed"),
+        size = 2.1, stroke = 0.4, fill = "white", colour = "black") +
+      ggplot2::scale_shape_manual(name = NULL, values = c("Observed" = 21)) +
+      ggplot2::scale_linetype_manual(name = NULL, values = c("Fitted curve" = "solid")) +
+      ggplot2::guides(shape = ggplot2::guide_legend(order = 1),
+                       linetype = ggplot2::guide_legend(order = 2)) +
+      ggplot2::scale_x_continuous(trans = x_trans, breaks = x_breaks,
+        labels = scales::label_number(big.mark = ","),
+        expand = ggplot2::expansion(mult = c(0.02, 0.03))) +
+      ggplot2::labs(
+        title = paste("Soil water retention -", gid),
+        subtitle = fit_note,
+        x = paste0("Matric suction (", units, ")"),
+        y = expression(paste("Volumetric water content (", m^3, " ", m^{-3}, ")")),
+        caption = axis_note
       ) +
-      (if (!is.null(pre_i) && nrow(pre_i) > 0)
-        geom_line(
-          data = pre_i,
-          aes(x = .data[["h"]], y = .data[["theta"]]),
-          linewidth = 0.9, color = "blue"
-        ) else NULL) +
-      labs(
-        title = paste("Van Genuchten Fit -", gid),
-        x = paste0("Suction (", units, ")"),
-        y = expression(theta)
-      ) +
-      theme_bw(base_size = 13)
-
-    if (isTRUE(log_x)) g <- g + scale_x_log10()
-    plots[[gid]] <- g
+      ggplot2::theme_classic(base_size = 12, base_family = "sans") +
+      ggplot2::theme(axis.text = ggplot2::element_text(colour = "black"),
+                     legend.position = "top", legend.justification = "left",
+                     legend.box = "horizontal", legend.title = ggplot2::element_blank(),
+                     plot.title = ggplot2::element_text(face = "bold"),
+                     plot.caption = ggplot2::element_text(hjust = 0, size = 9))
   }
   plots
 }
@@ -467,6 +513,28 @@ read_any <- function(path, type = c("auto","csv","excel")) {
   df
 }
 
+# Export one figure at its final publication size. Vector formats remain
+# scalable; raster formats use 600 dpi and a white background.
+save_wrc_figure <- function(plot, path, format, width_mm, height_mm, dpi = 600) {
+  format <- match.arg(format, c("pdf", "svg", "tiff", "png"))
+  stopifnot(length(width_mm) == 1L, length(height_mm) == 1L,
+            is.finite(width_mm), is.finite(height_mm),
+            width_mm > 0, height_mm > 0)
+  cairo <- isTRUE(capabilities("cairo"))
+  if (format == "svg" && !cairo) stop("SVG export requires R with Cairo support.")
+  device <- switch(format,
+    pdf = if (cairo) grDevices::cairo_pdf else grDevices::pdf,
+    svg = grDevices::svg, tiff = grDevices::tiff, png = grDevices::png
+  )
+  args <- list(filename = path, plot = plot, device = device,
+               width = width_mm, height = height_mm, units = "mm",
+               dpi = dpi, bg = "white")
+  if (format %in% c("tiff", "png") && cairo) args$type <- "cairo"
+  if (format == "tiff") args$compression <- "lzw"
+  if (format == "pdf" && !cairo) args$useDingbats <- FALSE
+  do.call(ggplot2::ggsave, args)
+}
+
 # ---------------- UI ----------------
 ui <- fluidPage(
   # --- Light CSS to improve look without extra packages ---
@@ -565,13 +633,16 @@ ui <- fluidPage(
       actionButton("fit_btn", "Fit Van Genuchten", class = "btn-primary"),
       br(), br(),
       div(class="soft-note",
-          HTML("Tip: Log x-axis ignores zeros. Ensure non-zero suctions for plotting.")
+          HTML("Enter suction as a non-negative magnitude. Keep saturation at h = 0; the zero-safe axis displays it directly.")
       ),
       hr(),
       h4("Downloads"),
       downloadButton("download_fits", "Download fits CSV"),
       br(), br(),
-      downloadButton("download_pred", "Download predictions CSV")
+      downloadButton("download_pred", "Download predictions CSV"),
+      br(), br(),
+      downloadButton("download_all_results", "Download all results CSV"),
+      helpText("One row per treatment ID: fit parameters, water points, pore-size classes, units and calculation settings.")
     ),
 
     mainPanel(
@@ -585,10 +656,33 @@ ui <- fluidPage(
         tabPanel("Plot WRC",
                  br(),
                  uiOutput("plot_id_picker"),
+                 selectInput("wrc_x_scale", "Suction axis",
+                             choices = c("Zero-safe log (includes saturation)" = "pseudo_log",
+                                         "Strict log10 (positive suction only)" = "log10",
+                                         "Linear" = "linear"),
+                             selected = "pseudo_log"),
                  checkboxInput("fixed_range", "Use fixed predicted range (0–1600 kPa)", value = FALSE),
-                 helpText("If units = hPa, the fixed range is 0–16000 hPa. Log x-axis ignores zeros."),
+                 helpText("The fixed range is 0–16000 hPa in hPa units. Zero-safe log is linear near saturation and logarithmic at higher suction. Strict log10 omits h = 0."),
+                 div(class = "soft-card",
+                     h4("Publication figure"),
+                     fluidRow(
+                       column(4, numericInput("figure_width_mm", "Width (mm)", 170, min = 60, max = 300)),
+                       column(4, numericInput("figure_height_mm", "Height (mm)", 115, min = 60, max = 300)),
+                       column(4, numericInput("figure_font_pt", "Font size (pt)", 11, min = 8, max = 18))
+                     ),
+                     checkboxInput("figure_show_title", "Include treatment title", TRUE),
+                     checkboxInput("figure_show_stats", "Include R² and RMSE", FALSE),
+                     checkboxInput("figure_show_legend", "Include legend", TRUE),
+                     selectInput("figure_format", "Download format",
+                                 choices = c("PDF - vector" = "pdf", "SVG - vector" = "svg",
+                                             "TIFF - 600 dpi, LZW compression" = "tiff",
+                                             "PNG - 600 dpi" = "png"),
+                                 selected = "pdf"),
+                     downloadButton("download_wrc_plot", "Download publication figure"),
+                     helpText("Set the final size required by your journal. A width of 85 mm is common for one column and 170 mm for two columns; check the journal's instructions.")
+                 ),
                  div(style="max-width: 880px;",
-                     plotOutput("wrc_plot", height = 440))
+                     plotOutput("wrc_plot", height = "auto"))
         ),
         tabPanel("Derived tables",
                  br(),
@@ -597,7 +691,7 @@ ui <- fluidPage(
                  tableOutput("wp_tbl"),
                  br(),
                  h4("Pore-size classes"),
-                 helpText(HTML("Macro = θ<sub>s</sub> − θ(10 kPa); Meso = θ(10) − θ(1500); Micro = θ(1500) − θ<sub>r</sub> (includes residual).")),
+                 helpText(HTML("Default diameter cutoffs: Macro > 1000 μm; Meso 10–1000 μm; Micro < 10 μm. Macro = θ<sub>s</sub> − θ(0.2912 kPa); Meso = θ(0.2912) − θ(29.12); Micro = θ(29.12), including residual water.")),
                  tableOutput("psd_tbl")
         ),
         tabPanel("Pore-size plots",
@@ -627,6 +721,8 @@ ui <- fluidPage(
                    tags$li(HTML("Porosity partition uses capillary equivalence: Macro > 1000 μm, Meso 10–1000 μm, Micro < 10 μm.")),
                    tags$li("AWC derived using θ at 10 and 1500 kPa by default (customizable in code).")
                  ),
+                 h4("Acknowledgments"),
+                 p("Financial support for this work was provided by the United States Department of Agriculture - Agricultural Research Service under a non-assistance cooperative agreement (58-6010-2-005)."),
                  h4("Attribution"),
                  HTML("
                    <p style='margin-bottom:6px;'>
@@ -647,7 +743,9 @@ ui <- fluidPage(
       div(class="footer",
           HTML(paste0("© ", format(Sys.Date(), "%Y"),
                       " SoilHydro · Auburn University · Contact: ",
-                      "<a href='mailto:edg0030@auburn.edu'>edg0030@auburn.edu</a>"))
+                      "<a href='mailto:edg0030@auburn.edu'>edg0030@auburn.edu</a>")),
+          p(style = "margin-top:8px;",
+            "Financial support for this work was provided by the United States Department of Agriculture - Agricultural Research Service under a non-assistance cooperative agreement (58-6010-2-005).")
       )
     )
   )
@@ -710,7 +808,10 @@ server <- function(input, output, session) {
       units    = input$units
     )
 
-    list(fits=fits, id_col=if (is.null(id_arg)) "ID" else id_arg, id_value=id_value)
+    # Keep observations, mappings and units attached to the fit until refitting.
+    list(fits = fits, data = df, id_arg = id_arg,
+         id_col = if (is.null(id_arg)) "ID" else id_arg, id_value = id_value,
+         theta_col = input$theta_col, h_col = input$h_col, units = input$units)
   }, ignoreInit = TRUE)
 
   # Fits table
@@ -732,21 +833,12 @@ server <- function(input, output, session) {
     )
   })
 
-  # Plot ID picker
+  # Each ID is a treatment: all replicate observations share one fitted curve.
   output$plot_id_picker <- renderUI({
     fr <- fits_reactive(); req(fr)
-    id_col <- fr$id_col
-    df <- raw_data()
-    if (!is.null(input$one_id_only) && isTRUE(input$one_id_only) && !is.null(fr$id_value)) {
-      selectInput("plot_id", "Select ID to plot", choices = fr$id_value, selected = fr$id_value)
-    } else {
-      if (!is.null(id_col) && (id_col %in% names(df))) {
-        ids <- unique(df[[id_col]])
-        selectInput("plot_id", "Select ID to plot", choices = ids, selected = ids[1])
-      } else {
-        selectInput("plot_id", "Select ID to plot", choices = ".all", selected = ".all")
-      }
-    }
+    ids <- as.character(fr$fits[[fr$id_col]][fr$fits$.fit_ok %in% TRUE])
+    validate(need(length(ids) > 0, "No fitted curves available. Check data or units."))
+    selectInput("plot_id", "Select treatment ID to plot", choices = ids, selected = ids[1])
   })
 
   # Bigger fonts
@@ -757,62 +849,80 @@ server <- function(input, output, session) {
   )
   psd_x45 <- theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-  # WRC plot
-  output$wrc_plot <- renderPlot({
+  # Both observed-range and fixed-range views use the same plotting function.
+  wrc_plot_reactive <- reactive({
     fr <- fits_reactive(); req(fr)
-    df <- raw_data()
-    id_col <- fr$id_col; plot_id <- input$plot_id; req(plot_id)
-
-    fits_for_plot <- fr$fits
-    if (!is.null(id_col) && (id_col %in% names(fits_for_plot))) {
-      fits_for_plot <- subset(fits_for_plot, fits_for_plot[[id_col]] == plot_id)
-      if (nrow(fits_for_plot) == 0 && id_col == "ID" && plot_id == ".all") {
-        fits_for_plot <- subset(fr$fits, fr$fits[[id_col]] == ".all")
-      }
-    }
-
-    if (!isTRUE(input$fixed_range)) {
-      plist <- plot_vg_fits(
-        data      = df,
-        params_df = fits_for_plot,
-        id        = if (id_col == "ID") NULL else id_col,
-        id_value  = if (!is.null(input$one_id_only) && isTRUE(input$one_id_only)) plot_id else NULL,
-        theta     = input$theta_col,
-        h         = input$h_col,
-        units     = input$units,
-        log_x     = TRUE,
-        points    = 400
+    plot_id <- input$plot_id; req(plot_id)
+    validate(need(plot_id %in% as.character(fr$fits[[fr$id_col]]),
+                  "Select a treatment from the current fit."))
+    plist <- plot_vg_fits(
+      data      = fr$data,
+      params_df = fr$fits,
+      id        = fr$id_arg,
+      id_value  = if (!is.null(fr$id_arg)) plot_id else NULL,
+      theta     = fr$theta_col,
+      h         = fr$h_col,
+      units     = fr$units,
+      x_scale   = input$wrc_x_scale,
+      h_range   = if (isTRUE(input$fixed_range)) .from_kPa(c(0, 1600), fr$units) else NULL,
+      points    = 500
+    )
+    p <- plist[[as.character(plot_id)]]
+    font_pt <- if (is.null(input$figure_font_pt)) 11 else input$figure_font_pt
+    width_mm <- if (is.null(input$figure_width_mm)) 170 else input$figure_width_mm
+    validate(need(length(font_pt) == 1L && is.finite(font_pt) &&
+                    font_pt >= 8 && font_pt <= 18, "Choose a font size from 8 to 18 pt."))
+    validate(need(length(width_mm) == 1L && is.finite(width_mm) && width_mm >= 60 &&
+                    width_mm <= 300, "Choose a figure width from 60 to 300 mm."))
+    caption_size <- max(font_pt - 2, 7)
+    caption_chars <- max(20, floor((width_mm - 24) * 72 / 25.4 / (caption_size * 0.5)))
+    p <- p + labs(caption = paste(strwrap(p$labels$caption, width = caption_chars), collapse = "\n"))
+    p <- p + theme_classic(base_size = font_pt, base_family = "sans") +
+      theme(
+        axis.line = element_line(linewidth = 0.4, colour = "black"),
+        axis.ticks = element_line(linewidth = 0.4, colour = "black"),
+        axis.text = element_text(colour = "black"),
+        axis.title = element_text(size = font_pt, colour = "black"),
+        plot.title = element_text(size = font_pt + 1, face = "bold", margin = margin(b = 6)),
+        plot.subtitle = element_text(size = font_pt - 1),
+        plot.caption = element_text(size = caption_size, hjust = 0, margin = margin(t = 8)),
+        legend.position = if (isTRUE(input$figure_show_legend)) "top" else "none",
+        legend.justification = "left",
+        legend.box = if (width_mm < 110) "vertical" else "horizontal",
+        legend.title = element_blank(),
+        plot.margin = margin(8, 12, 8, 8)
       )
-      p <- if (length(plist) == 1) plist[[1]] else if (plot_id %in% names(plist)) plist[[plot_id]] else plist[[1]]
-      print(p + base_theme_big)
-      return(invisible())
+    if (!isTRUE(input$figure_show_title)) p <- p + labs(title = NULL)
+    if (!isTRUE(input$figure_show_stats)) p <- p + labs(subtitle = NULL)
+    p
+  })
+  output$wrc_plot <- renderPlot({
+    p <- wrc_plot_reactive(); req(p)
+    print(p)
+  }, height = function() {
+    width_px <- session$clientData$output_wrc_plot_width
+    if (is.null(width_px) || width_px <= 0) width_px <- 880
+    w <- if (is.null(input$figure_width_mm)) 170 else input$figure_width_mm
+    h <- if (is.null(input$figure_height_mm)) 115 else input$figure_height_mm
+    req(is.finite(w), is.finite(h), w > 0, h > 0)
+    max(250, min(1400, width_px * h / w))
+  })
+  output$download_wrc_plot <- downloadHandler(
+    filename = function() {
+      id_label <- gsub("[^[:alnum:]_-]+", "_", input$plot_id)
+      paste0("SWRC_", substr(id_label, 1, 80), ".", input$figure_format)
+    },
+    content = function(file) {
+      width_mm <- input$figure_width_mm
+      height_mm <- input$figure_height_mm
+      validate(need(length(width_mm) == 1L && length(height_mm) == 1L &&
+                      is.finite(width_mm) && is.finite(height_mm) &&
+                      width_mm >= 60 && width_mm <= 300 &&
+                      height_mm >= 60 && height_mm <= 300,
+                    "Choose figure width and height from 60 to 300 mm."))
+      save_wrc_figure(wrc_plot_reactive(), file, input$figure_format,
+                      width_mm, height_mm, dpi = 600)
     }
-
-    # Fixed range predictions
-    if (input$units == "kPa") { h_min <- 1e-6; h_max <- 1600; x_label <- "Suction (kPa)" }
-    else { h_min <- 1e-5; h_max <- 16000; x_label <- "Suction (hPa)" }
-    h_seq <- 10^(seq(log10(h_min), log10(h_max), length.out = 500))
-
-    r <- fits_for_plot[1, , drop = FALSE]
-    if (!nrow(r) || !isTRUE(r$.fit_ok[1])) return(NULL)
-
-    if (id_col == "ID") d_obs <- df else d_obs <- df[df[[id_col]] == plot_id, , drop = FALSE]
-    d_obs <- d_obs[is.finite(d_obs[[input$theta_col]]) &
-                     is.finite(d_obs[[input$h_col]]) &
-                     d_obs[[input$h_col]] > 0, , drop = FALSE]
-
-    theta_hat <- vg_fun_kPa(.to_kPa(h_seq, input$units),
-                            r$theta_r[1], r$theta_s[1], r$alpha[1], r$n[1])
-    pd <- data.frame(h = h_seq, theta = theta_hat)
-
-    g <- ggplot() +
-      geom_point(data = d_obs, aes(x = .data[[input$h_col]], y = .data[[input$theta_col]]), size = 2) +
-      geom_line(data = pd, aes(x = h, y = theta), linewidth = 0.9, color = "blue") +
-      scale_x_log10() +
-      labs(title = paste("Van Genuchten Fit -", plot_id), x = x_label, y = expression(theta)) +
-      theme_bw(base_size = 13)
-
-    print(g + base_theme_big)
   })
 
   # Water points
@@ -846,6 +956,53 @@ server <- function(input, output, session) {
     content = function(file) {
       fr <- fits_reactive(); req(fr)
       utils::write.csv(fr$fits, file, row.names = FALSE)
+    }
+  )
+
+  # Combine the three result tables without duplicating shared parameters.
+  all_results_reactive <- reactive({
+    fr <- fits_reactive(); req(fr)
+    out <- fr$fits
+    req(nrow(out) > 0)
+    id_col <- fr$id_col
+    wp <- vg_water_points(out, id_col = id_col, fc_kPa = 10, pwp_kPa = 1500)
+    psd <- psd_reactive()
+    for (tbl in list(wp, psd)) {
+      idx <- match(as.character(out[[id_col]]), as.character(tbl[[id_col]]))
+      for (col in setdiff(names(tbl), names(out))) out[[col]] <- tbl[[col]][idx]
+    }
+
+    # Record settings so each exported row is interpretable on its own.
+    out$model <- "van Genuchten-Mualem"
+    out$fit_method <- "L-BFGS-B; unweighted least squares"
+    out$m_constraint <- "1 - 1/n"
+    out$suction_input_units <- fr$units
+    out$alpha_units <- "kPa^-1"
+    out$water_content_units <- "m3 m^-3"
+    out$fc_kPa <- 10
+    out$pwp_kPa <- 1500
+    out$d_macro_um <- 1000
+    out$d_micro_um <- 10
+    out$percent_basis <- "theta_s"
+    out$include_residual_in_micro <- TRUE
+    out$surface_tension_N_m <- 0.0728
+    out$cos_contact_angle <- 1
+
+    finite <- is.finite(fr$data[[fr$theta_col]]) & is.finite(fr$data[[fr$h_col]])
+    ids <- if (is.null(fr$id_arg)) rep(".all", nrow(fr$data)) else as.character(fr$data[[fr$id_arg]])
+    suctions <- lapply(as.character(out[[id_col]]), function(gid) {
+      .to_kPa(fr$data[[fr$h_col]][finite & !is.na(ids) & ids == gid], fr$units)
+    })
+    out$n_observations <- vapply(suctions, length, integer(1))
+    out$n_suction_levels <- vapply(suctions, function(x) length(unique(x)), integer(1))
+    out$observed_suction_min_kPa <- vapply(suctions, function(x) if (length(x)) min(x) else NA_real_, numeric(1))
+    out$observed_suction_max_kPa <- vapply(suctions, function(x) if (length(x)) max(x) else NA_real_, numeric(1))
+    out
+  })
+  output$download_all_results <- downloadHandler(
+    filename = function() paste0("vg_all_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv"),
+    content = function(file) {
+      utils::write.csv(all_results_reactive(), file, row.names = FALSE, na = "")
     }
   )
 
@@ -885,3 +1042,4 @@ server <- function(input, output, session) {
 
 # ---- run app ----
 shinyApp(ui, server)
+

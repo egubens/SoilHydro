@@ -1,0 +1,35 @@
+name: SWRC regression checks
+
+on:
+  push:
+    branches: [codex/fix-swrc-saturation-axis]
+  pull_request:
+    paths:
+      - 'R/**'
+      - 'inst/SHApp/**'
+      - 'tests/**'
+      - 'DESCRIPTION'
+      - '.github/workflows/swrc-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swrc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - name: Install regression dependencies
+        run: Rscript -e 'install.packages(c("ggplot2", "scales", "shiny", "rlang"))'
+      - name: Check treatment grouping and saturation plotting
+        env:
+          SWRC_ARTIFACT_DIR: ${{ runner.temp }}/swrc-figures
+        run: Rscript tests/swrc-regression.R
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swrc-synthetic-preview
+          path: ${{ runner.temp }}/swrc-figures/

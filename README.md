@@ -10,7 +10,7 @@ standardizes suction units, fits per treatment/group, predicts
 $\theta(h)$, computes water points (FC, PWP, AWC), partitions porosity
 into macro/meso/micro classes, and plots results.
 
-- 📦 **Dependencies**: `stats`, `ggplot2`
+- 📦 **Dependencies**: `stats`, `ggplot2`, `rlang`, `scales`
 - 🧮 **Model**: Van Genuchten (Mualem form, m = 1 - 1/n)
 - 🧭 **Units**: Accepts `kPa` or `hPa` for raw data; fitting is done in
   kPa internally
@@ -44,7 +44,7 @@ if (!requireNamespace("devtools", quietly = TRUE)) {
 devtools::install_github("egubens/SoilHydro")
 ```
 
-> Requires R ≥ 3.6; packages: **stats** (base), **ggplot2**.
+> Requires R ≥ 3.6; packages: **stats** (base), **ggplot2**, **rlang**, **scales**.
 
 ------------------------------------------------------------------------
 
@@ -232,6 +232,40 @@ Pore-size classes from VG fits.
 
 ------------------------------------------------------------------------
 
+## Saturation, treatment IDs, and publication figures
+
+Keep saturation observations at `h = 0`. Use the zero-safe axis to include
+saturation without extending a strict log axis to an arbitrary tiny number:
+
+```r
+plots <- plot_vg_fits(df, fits, id = "Product", theta = "theta",
+                     h = "hPa", units = "hPa", x_scale = "pseudo_log")
+```
+
+The pseudo-log axis is linear near zero and logarithmic at higher suction,
+with a transition scale of 0.1 kPa (1 hPa). It changes only the display.
+The default package call still respects `log_x`; `x_scale = "log10"`
+selects a strict positive-only log axis, and `x_scale = "linear"` includes
+zero on a linear axis. The optional `h_range = c(0, 16000)` sets the
+prediction range in the chosen units.
+
+In the Shiny app, each distinct treatment ID has one fit and one plot,
+including all replicate observations with that ID. A column literally
+named `ID` works the same as `Product` or any other treatment column.
+The app defaults to the zero-safe axis and keeps the fitted dataset and
+units together until you click **Fit Van Genuchten** again.
+
+The **Publication figure** controls set final width/height in millimeters,
+font size, title, fit statistics, and legend. Download vector PDF/SVG or
+600 dpi PNG/TIFF (LZW compression). Set dimensions to the target journal's
+requirements. The axis note identifies the nonstandard near-zero scale.
+
+**Download all results CSV** combines fit parameters, R²/RMSE, FC/PWP/AWC,
+and pore-size classes into one row per treatment. Shared `theta_r` and
+`theta_s` columns appear once. The export includes units, observation
+counts, measured suction range, and calculation settings; alpha is always
+in kPa⁻¹, water content in m³ m⁻³, and pore percentages use theta_s.
+
 ## Citing the methods
 
 - Van Genuchten, M. Th. (1980). A closed-form equation for predicting
@@ -261,3 +295,4 @@ Financial support for this work was provided by the United States Department of 
 ## License
 
 MIT © Erick Gutierrez / Auburn University
+

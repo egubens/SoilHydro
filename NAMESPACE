@@ -10,4 +10,6 @@ export(vg_pore_classes)
 export(vg_predict)
 export(vg_water_points)
 import(ggplot2)
+importFrom(rlang,.data)
 importFrom(stats,optim)
+
