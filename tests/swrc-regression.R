@@ -3,6 +3,8 @@
 library(ggplot2)
 library(rlang)
 source("R/documentation.R")
+artifact_dir <- Sys.getenv("SWRC_ARTIFACT_DIR", tempfile("swrc-figures-"))
+dir.create(artifact_dir, recursive = TRUE, showWarnings = FALSE)
 
 params <- data.frame(
   ID = c("Treatment A", "Treatment B"), .fit_ok = TRUE,
@@ -130,6 +132,16 @@ shiny::testServer(app$server, {
             identical(round_trip$ID, combined$ID),
             isTRUE(all.equal(round_trip$AWC, combined$AWC)))
   unlink(csv_export)
+  app$save_wrc_figure(wrc_plot_reactive(),
+    file.path(artifact_dir, "swrc-app-two-column.png"), "png", 170, 115)
+  session$setInputs(figure_width_mm = 85, figure_height_mm = 85,
+                    figure_font_pt = 9, figure_show_title = FALSE)
+  app$save_wrc_figure(wrc_plot_reactive(),
+    file.path(artifact_dir, "swrc-app-one-column.png"), "png", 85, 85)
+  app$save_wrc_figure(wrc_plot_reactive(),
+    file.path(artifact_dir, "swrc-app-one-column.pdf"), "pdf", 85, 85)
+  session$setInputs(figure_width_mm = 170, figure_height_mm = 115,
+                    figure_font_pt = 11, figure_show_title = TRUE)
   session$setInputs(plot_id = "Treatment B", fixed_range = TRUE)
   stopifnot(all(point_data(wrc_plot_reactive())$ID == "Treatment B"),
             identical(range(curve_data(wrc_plot_reactive())$h), c(0, 16000)))
@@ -152,8 +164,6 @@ shiny::testServer(app$server, {
 })
 unlink(csv_path)
 
-artifact_dir <- Sys.getenv("SWRC_ARTIFACT_DIR", tempfile("swrc-figures-"))
-dir.create(artifact_dir, recursive = TRUE, showWarnings = FALSE)
 ggsave(file.path(artifact_dir, "swrc-zero-safe.png"), plots[[1]],
        width = 8.8, height = 5.2, units = "in", dpi = 150)
 for (format in c("pdf", "svg", "tiff", "png")) {

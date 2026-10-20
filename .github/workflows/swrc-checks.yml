@@ -2,7 +2,7 @@ name: SWRC regression checks
 
 on:
   push:
-    branches: [codex/fix-swrc-saturation-axis]
+    branches: [main]
   pull_request:
     paths:
       - 'R/**'
