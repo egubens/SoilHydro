@@ -1,0 +1,11 @@
+name: SoilHydro
+username: 3n0c6z-erick-gutierrez
+account: 3n0c6z-erick-gutierrez
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15514949
+bundleId: 12717321
+url: https://3n0c6z-erick-gutierrez.shinyapps.io/SoilHydro/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE

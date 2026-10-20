@@ -154,11 +154,38 @@ vg_predict <- function(params_df, id_col = NULL, new_h, units = c("kPa","hPa"), 
   do.call(rbind, out)
 }
 
-# Plot observed & fitted curves
+# Keep each treatment's color stable when the displayed selection changes.
+swrc_treatment_colours <- function(ids) {
+  ids <- unique(as.character(ids))
+  ids <- ids[!is.na(ids)]
+  if (!length(ids)) return(setNames(character(), character()))
+  base <- c("#0072B2", "#D55E00", "#009E73", "#CC79A7",
+            "#E69F00", "#56B4E9", "#333333", "#882255")
+  extra <- if (length(ids) > length(base))
+    grDevices::hcl.colors(length(ids) - length(base), palette = "Dark 3") else character()
+  setNames(c(base, extra)[seq_along(ids)], ids)
+}
+
+# Wrap long treatment codes as well as ordinary text in compact legends.
+wrap_swrc_text <- function(text, width = 30L) {
+  width <- max(1L, as.integer(width))
+  vapply(as.character(text), function(label) {
+    lines <- strwrap(label, width = width)
+    if (!length(lines)) return("")
+    pieces <- unlist(lapply(lines, function(line) {
+      starts <- seq.int(1L, nchar(line), by = width)
+      substring(line, starts, pmin(nchar(line), starts + width - 1L))
+    }), use.names = FALSE)
+    paste(pieces, collapse = "\n")
+  }, character(1), USE.NAMES = FALSE)
+}
+
+# Plot observed & fitted curves; combine = TRUE overlays the selected IDs.
 plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
                          units = c("kPa","hPa"),
                          log_x = TRUE, points = 400,
-                         x_scale = NULL, h_range = NULL) {
+                         x_scale = NULL, h_range = NULL, combine = FALSE,
+                         treatment_colours = NULL, legend_labels = NULL) {
   units <- match.arg(units)
   if (is.null(x_scale)) x_scale <- if (isTRUE(log_x)) "log10" else "linear"
   x_scale <- match.arg(x_scale, c("pseudo_log", "log10", "linear"))
@@ -173,7 +200,7 @@ plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
   if (!is.null(id)) {
     stopifnot(id %in% names(data))
     if (!is.null(id_value)) {
-      data <- data[!is.na(data[[id]]) & data[[id]] == id_value, , drop = FALSE]
+      data <- data[!is.na(data[[id]]) & data[[id]] %in% id_value, , drop = FALSE]
       if (nrow(data) == 0) stop("No rows match id_value in the id column.")
     }
   }
@@ -198,16 +225,16 @@ plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
 
   pf <- params_df[params_df$.fit_ok %in% TRUE, , drop = FALSE]
   if (!is.null(id) && !is.null(id_value)) {
-    pf <- pf[pf[[id_name]] == id_value, , drop = FALSE]
+    pf <- pf[pf[[id_name]] %in% id_value, , drop = FALSE]
     if (!nrow(pf)) stop("No fitted parameters for the requested id_value.")
   }
 
   # The transition is the same physical suction in either display unit.
   sigma <- .from_kPa(0.1, units)
   x_trans <- switch(x_scale,
-    pseudo_log = scales::pseudo_log_trans(sigma = sigma, base = 10),
-    log10 = scales::log10_trans(),
-    linear = scales::identity_trans()
+                    pseudo_log = scales::pseudo_log_trans(sigma = sigma, base = 10),
+                    log10 = scales::log10_trans(),
+                    linear = scales::identity_trans()
   )
   x_breaks <- if (x_scale == "pseudo_log") {
     function(limits) {
@@ -221,13 +248,15 @@ plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
     scales::breaks_pretty(n = 6)
   }
   axis_note <- switch(x_scale,
-    pseudo_log = paste0("Pseudo-log axis; linear near 0 (scale: ", sigma, " ", units, ")."),
-    log10 = "Log10 suction axis; h = 0 cannot be displayed.",
-    linear = "Linear suction axis."
+                      pseudo_log = paste0("Pseudo-log axis; linear near 0 (scale: ", sigma, " ", units, ")."),
+                      log10 = "Log10 suction axis; h = 0 cannot be displayed.",
+                      linear = "Linear suction axis."
   )
 
   id_levels <- unique(d2[[id_name]])
   plots <- setNames(vector("list", length(id_levels)), id_levels)
+  combined_obs <- setNames(vector("list", length(id_levels)), id_levels)
+  combined_curves <- setNames(vector("list", length(id_levels)), id_levels)
   for (gid in id_levels) {
     obs_i <- d2[d2[[id_name]] == gid, , drop = FALSE]
     r <- pf[!is.na(pf[[id_name]]) & pf[[id_name]] == gid, , drop = FALSE]
@@ -241,7 +270,7 @@ plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
         bounds[1] <- if (length(positive)) min(positive) else min(sigma, bounds[2])
       }
       hseq <- x_trans$inverse(seq(x_trans$transform(bounds[1]),
-                                 x_trans$transform(bounds[2]), length.out = points))
+                                  x_trans$transform(bounds[2]), length.out = points))
       hseq <- pmax(hseq, 0)
       hseq[c(1, points)] <- bounds
       theta_hat <- vg_fun_kPa(.to_kPa(hseq, units),
@@ -250,24 +279,33 @@ plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
     }
 
     fit_note <- NULL
+    if (isTRUE(combine)) {
+      combined_obs[[gid]] <- data.frame(Treatment = gid, h = obs_i[[h]],
+                                        theta = obs_i[[theta]], stringsAsFactors = FALSE)
+      if (!is.null(pre_i)) {
+        combined_curves[[gid]] <- data.frame(Treatment = gid, pre_i,
+                                             stringsAsFactors = FALSE)
+      }
+      next
+    }
     if (nrow(r) && all(c("R2", "RMSE") %in% names(r))) {
       fit_note <- sprintf("R² = %.3f    RMSE = %.4f", r$R2[1], r$RMSE[1])
     }
     plots[[gid]] <- ggplot2::ggplot() +
       (if (!is.null(pre_i))
         ggplot2::geom_line(data = pre_i,
-          ggplot2::aes(x = .data[["h"]], y = .data[["theta"]], linetype = "Fitted curve"),
-          linewidth = 0.9, color = "#0072B2") else NULL) +
+                           ggplot2::aes(x = .data[["h"]], y = .data[["theta"]], linetype = "Fitted curve"),
+                           linewidth = 0.9, color = "#0072B2") else NULL) +
       ggplot2::geom_point(data = obs_i,
-        ggplot2::aes(x = .data[[h]], y = .data[[theta]], shape = "Observed"),
-        size = 2.1, stroke = 0.4, fill = "white", colour = "black") +
+                          ggplot2::aes(x = .data[[h]], y = .data[[theta]], shape = "Observed"),
+                          size = 2.1, stroke = 0.4, fill = "white", colour = "black") +
       ggplot2::scale_shape_manual(name = NULL, values = c("Observed" = 21)) +
       ggplot2::scale_linetype_manual(name = NULL, values = c("Fitted curve" = "solid")) +
       ggplot2::guides(shape = ggplot2::guide_legend(order = 1),
-                       linetype = ggplot2::guide_legend(order = 2)) +
+                      linetype = ggplot2::guide_legend(order = 2)) +
       ggplot2::scale_x_continuous(trans = x_trans, breaks = x_breaks,
-        labels = scales::label_number(big.mark = ","),
-        expand = ggplot2::expansion(mult = c(0.02, 0.03))) +
+                                  labels = scales::label_number(big.mark = ","),
+                                  expand = ggplot2::expansion(mult = c(0.02, 0.03))) +
       ggplot2::labs(
         title = paste("Soil water retention -", gid),
         subtitle = fit_note,
@@ -282,7 +320,55 @@ plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
                      plot.title = ggplot2::element_text(face = "bold"),
                      plot.caption = ggplot2::element_text(hjust = 0, size = 9))
   }
-  plots
+  if (!isTRUE(combine)) return(plots)
+
+  # Preserve each treatment's own observations and prediction range.
+  observed <- do.call(rbind, combined_obs)
+  predicted <- do.call(rbind, combined_curves)
+  colours <- if (is.null(treatment_colours))
+    swrc_treatment_colours(id_levels) else treatment_colours
+  stopifnot(is.character(colours), !is.null(names(colours)),
+            !anyDuplicated(names(colours)), all(id_levels %in% names(colours)))
+  treatment_levels <- names(colours)[names(colours) %in% id_levels]
+  observed$Treatment <- factor(observed$Treatment, levels = treatment_levels)
+  if (!is.null(predicted)) {
+    predicted$Treatment <- factor(predicted$Treatment, levels = treatment_levels)
+  }
+  labels <- if (is.null(legend_labels)) treatment_levels else
+    unname(legend_labels[treatment_levels])
+  fit_note <- NULL
+  if (all(c("R2", "RMSE") %in% names(pf))) {
+    r <- pf[match(treatment_levels, as.character(pf[[id_name]])), , drop = FALSE]
+    fit_note <- paste(sprintf("%s: R² = %.3f, RMSE = %.4f",
+                              treatment_levels, r$R2, r$RMSE), collapse = "\n")
+  }
+  ggplot2::ggplot() +
+    (if (!is.null(predicted) && nrow(predicted))
+      ggplot2::geom_line(data = predicted,
+                         ggplot2::aes(x = .data[["h"]], y = .data[["theta"]],
+                                      group = .data[["Treatment"]], colour = .data[["Treatment"]]),
+                         linewidth = 0.9) else NULL) +
+    ggplot2::geom_point(data = observed,
+                        ggplot2::aes(x = .data[["h"]], y = .data[["theta"]], colour = .data[["Treatment"]]),
+                        shape = 16, size = 2.1, alpha = 0.85) +
+    ggplot2::scale_colour_manual(name = NULL, values = colours,
+                                 limits = treatment_levels, breaks = treatment_levels, labels = labels, drop = FALSE) +
+    ggplot2::scale_x_continuous(trans = x_trans, breaks = x_breaks,
+                                labels = scales::label_number(big.mark = ","),
+                                expand = ggplot2::expansion(mult = c(0.02, 0.03))) +
+    ggplot2::labs(
+      title = if (length(treatment_levels) == 1L) treatment_levels else "SWRC comparison",
+      subtitle = fit_note,
+      x = paste0("Matric suction (", units, ")"),
+      y = expression(paste("Volumetric water content (", m^3, " ", m^{-3}, ")")),
+      caption = axis_note
+    ) +
+    ggplot2::theme_classic(base_size = 12, base_family = "sans") +
+    ggplot2::theme(axis.text = ggplot2::element_text(colour = "black"),
+                   legend.position = "top", legend.justification = "left",
+                   legend.title = ggplot2::element_blank(),
+                   plot.title = ggplot2::element_text(face = "bold"),
+                   plot.caption = ggplot2::element_text(hjust = 0, size = 9))
 }
 
 # Water points & AWC
@@ -513,7 +599,7 @@ read_any <- function(path, type = c("auto","csv","excel")) {
   df
 }
 
-# Export one figure at its final publication size. Vector formats remain
+# Export one SWRC plot at its selected size. Vector formats remain
 # scalable; raster formats use 600 dpi and a white background.
 save_wrc_figure <- function(plot, path, format, width_mm, height_mm, dpi = 600) {
   format <- match.arg(format, c("pdf", "svg", "tiff", "png"))
@@ -523,8 +609,8 @@ save_wrc_figure <- function(plot, path, format, width_mm, height_mm, dpi = 600) 
   cairo <- isTRUE(capabilities("cairo"))
   if (format == "svg" && !cairo) stop("SVG export requires R with Cairo support.")
   device <- switch(format,
-    pdf = if (cairo) grDevices::cairo_pdf else grDevices::pdf,
-    svg = grDevices::svg, tiff = grDevices::tiff, png = grDevices::png
+                   pdf = if (cairo) grDevices::cairo_pdf else grDevices::pdf,
+                   svg = grDevices::svg, tiff = grDevices::tiff, png = grDevices::png
   )
   args <- list(filename = path, plot = plot, device = device,
                width = width_mm, height = height_mm, units = "mm",
@@ -664,13 +750,13 @@ ui <- fluidPage(
                  checkboxInput("fixed_range", "Use fixed predicted range (0–1600 kPa)", value = FALSE),
                  helpText("The fixed range is 0–16000 hPa in hPa units. Zero-safe log is linear near saturation and logarithmic at higher suction. Strict log10 omits h = 0."),
                  div(class = "soft-card",
-                     h4("Publication figure"),
+                     h4("SWRC Plot"),
                      fluidRow(
                        column(4, numericInput("figure_width_mm", "Width (mm)", 170, min = 60, max = 300)),
                        column(4, numericInput("figure_height_mm", "Height (mm)", 115, min = 60, max = 300)),
                        column(4, numericInput("figure_font_pt", "Font size (pt)", 11, min = 8, max = 18))
                      ),
-                     checkboxInput("figure_show_title", "Include treatment title", TRUE),
+                     checkboxInput("figure_show_title", "Include plot title", TRUE),
                      checkboxInput("figure_show_stats", "Include R² and RMSE", FALSE),
                      checkboxInput("figure_show_legend", "Include legend", TRUE),
                      selectInput("figure_format", "Download format",
@@ -678,8 +764,8 @@ ui <- fluidPage(
                                              "TIFF - 600 dpi, LZW compression" = "tiff",
                                              "PNG - 600 dpi" = "png"),
                                  selected = "pdf"),
-                     downloadButton("download_wrc_plot", "Download publication figure"),
-                     helpText("Set the final size required by your journal. A width of 85 mm is common for one column and 170 mm for two columns; check the journal's instructions.")
+                     downloadButton("download_wrc_plot", "Download SWRC plot"),
+                     helpText("Choose the plot width, height, and font size. Downloads use these dimensions.")
                  ),
                  div(style="max-width: 880px;",
                      plotOutput("wrc_plot", height = "auto"))
@@ -833,12 +919,44 @@ server <- function(input, output, session) {
     )
   })
 
-  # Each ID is a treatment: all replicate observations share one fitted curve.
+  # Select any subset of successfully fitted treatment IDs for one graph.
   output$plot_id_picker <- renderUI({
     fr <- fits_reactive(); req(fr)
-    ids <- as.character(fr$fits[[fr$id_col]][fr$fits$.fit_ok %in% TRUE])
+    ids <- unique(as.character(fr$fits[[fr$id_col]][fr$fits$.fit_ok %in% TRUE]))
     validate(need(length(ids) > 0, "No fitted curves available. Check data or units."))
-    selectInput("plot_id", "Select treatment ID to plot", choices = ids, selected = ids[1])
+    previous <- isolate(input$plot_ids)
+    selected <- ids[ids %in% previous]
+    if (!length(selected)) selected <- ids
+    tagList(
+      selectizeInput("plot_ids", "Treatments to show", choices = ids,
+                     selected = selected, multiple = TRUE,
+                     options = list(plugins = list("remove_button"),
+                                    placeholder = "Select one or more treatments",
+                                    closeAfterSelect = FALSE)),
+      div(style = "display:flex; gap:8px; margin-bottom:8px;",
+          actionButton("select_all_treatments", "Select all", class = "btn-default btn-sm"),
+          actionButton("clear_treatments", "Clear selection", class = "btn-default btn-sm")),
+      helpText("Select one or more treatments. Points and fitted curves use matching treatment colors.")
+    )
+  })
+  observeEvent(input$select_all_treatments, {
+    fr <- fits_reactive(); req(fr)
+    ids <- unique(as.character(fr$fits[[fr$id_col]][fr$fits$.fit_ok %in% TRUE]))
+    updateSelectizeInput(session, "plot_ids", selected = ids)
+  }, ignoreInit = TRUE)
+  observeEvent(input$clear_treatments, {
+    updateSelectizeInput(session, "plot_ids", selected = character())
+  }, ignoreInit = TRUE)
+
+  selected_plot_ids <- reactive({
+    fr <- fits_reactive(); req(fr)
+    selected <- unique(as.character(input$plot_ids))
+    available <- as.character(fr$fits[[fr$id_col]][fr$fits$.fit_ok %in% TRUE])
+    validate(
+      need(length(selected) > 0, "Select at least one treatment to show in the SWRC plot."),
+      need(all(selected %in% available), "Choose treatments from the current fit.")
+    )
+    available[available %in% selected]
   })
 
   # Bigger fonts
@@ -849,33 +967,44 @@ server <- function(input, output, session) {
   )
   psd_x45 <- theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-  # Both observed-range and fixed-range views use the same plotting function.
+  # Overlay selected treatments; fitting and derived result tables stay separate.
   wrc_plot_reactive <- reactive({
     fr <- fits_reactive(); req(fr)
-    plot_id <- input$plot_id; req(plot_id)
-    validate(need(plot_id %in% as.character(fr$fits[[fr$id_col]]),
-                  "Select a treatment from the current fit."))
-    plist <- plot_vg_fits(
-      data      = fr$data,
-      params_df = fr$fits,
-      id        = fr$id_arg,
-      id_value  = if (!is.null(fr$id_arg)) plot_id else NULL,
-      theta     = fr$theta_col,
-      h         = fr$h_col,
-      units     = fr$units,
-      x_scale   = input$wrc_x_scale,
-      h_range   = if (isTRUE(input$fixed_range)) .from_kPa(c(0, 1600), fr$units) else NULL,
-      points    = 500
-    )
-    p <- plist[[as.character(plot_id)]]
+    selected_ids <- selected_plot_ids()
     font_pt <- if (is.null(input$figure_font_pt)) 11 else input$figure_font_pt
     width_mm <- if (is.null(input$figure_width_mm)) 170 else input$figure_width_mm
     validate(need(length(font_pt) == 1L && is.finite(font_pt) &&
                     font_pt >= 8 && font_pt <= 18, "Choose a font size from 8 to 18 pt."))
     validate(need(length(width_mm) == 1L && is.finite(width_mm) && width_mm >= 60 &&
                     width_mm <= 300, "Choose a figure width from 60 to 300 mm."))
+
+    colour_ids <- if (is.null(fr$id_arg)) ".all" else
+      sort(unique(as.character(fr$data[[fr$id_arg]])))
+    colours <- swrc_treatment_colours(colour_ids)
+    available_width_pt <- (width_mm - 24) * 72 / 25.4
+    label_width_pt <- min(max(nchar(selected_ids)), 24) * font_pt * 0.55 + 22
+    legend_cols <- max(1L, min(length(selected_ids),
+                               floor(available_width_pt / label_width_pt)))
+    label_chars <- max(8L, floor((available_width_pt / legend_cols - 22) / (font_pt * 0.55)))
+    legend_labels <- setNames(wrap_swrc_text(selected_ids, label_chars), selected_ids)
+
+    p <- plot_vg_fits(
+      data      = fr$data,
+      params_df = fr$fits,
+      id        = fr$id_arg,
+      id_value  = if (!is.null(fr$id_arg)) selected_ids else NULL,
+      theta     = fr$theta_col,
+      h         = fr$h_col,
+      units     = fr$units,
+      x_scale   = input$wrc_x_scale,
+      h_range   = if (isTRUE(input$fixed_range)) .from_kPa(c(0, 1600), fr$units) else NULL,
+      points    = 500,
+      combine   = TRUE,
+      treatment_colours = colours,
+      legend_labels = legend_labels
+    )
     caption_size <- max(font_pt - 2, 7)
-    caption_chars <- max(20, floor((width_mm - 24) * 72 / 25.4 / (caption_size * 0.5)))
+    caption_chars <- max(20, floor(available_width_pt / (caption_size * 0.5)))
     p <- p + labs(caption = paste(strwrap(p$labels$caption, width = caption_chars), collapse = "\n"))
     p <- p + theme_classic(base_size = font_pt, base_family = "sans") +
       theme(
@@ -896,11 +1025,21 @@ server <- function(input, output, session) {
         legend.margin = margin(1, 1, 1, 1),
         legend.title = element_blank(),
         plot.margin = margin(8, 12, 8, 8)
-      )
-    title_chars <- max(12, floor((width_mm - 24) * 72 / 25.4 / ((font_pt + 1) * 0.5)))
+      ) +
+      guides(colour = guide_legend(ncol = legend_cols, byrow = TRUE,
+                                   override.aes = list(alpha = 1)))
+
+    title_chars <- max(12, floor(available_width_pt / ((font_pt + 1) * 0.5)))
+    title <- if (length(selected_ids) == 1L) selected_ids else "SWRC comparison"
     p <- p + labs(title = if (isTRUE(input$figure_show_title))
-                    paste(strwrap(as.character(plot_id), width = title_chars), collapse = "\n") else NULL)
-    if (!isTRUE(input$figure_show_stats)) p <- p + labs(subtitle = NULL)
+      wrap_swrc_text(title, title_chars) else NULL)
+    if (isTRUE(input$figure_show_stats) && !is.null(p$labels$subtitle)) {
+      stat_chars <- max(20, floor(available_width_pt / ((font_pt - 1) * 0.5)))
+      stat_lines <- strsplit(p$labels$subtitle, "\n", fixed = TRUE)[[1]]
+      p <- p + labs(subtitle = paste(wrap_swrc_text(stat_lines, stat_chars), collapse = "\n"))
+    } else {
+      p <- p + labs(subtitle = NULL)
+    }
     p
   })
   output$wrc_plot <- renderPlot({
@@ -916,7 +1055,9 @@ server <- function(input, output, session) {
   })
   output$download_wrc_plot <- downloadHandler(
     filename = function() {
-      id_label <- gsub("[^[:alnum:]_-]+", "_", input$plot_id)
+      ids <- selected_plot_ids()
+      id_label <- if (length(ids) == 1L)
+        gsub("[^[:alnum:]_-]+", "_", ids) else paste0("comparison_", length(ids), "_treatments")
       paste0("SWRC_", substr(id_label, 1, 80), ".", input$figure_format)
     },
     content = function(file) {
@@ -1049,4 +1190,5 @@ server <- function(input, output, session) {
 
 # ---- run app ----
 shinyApp(ui, server)
+
 
