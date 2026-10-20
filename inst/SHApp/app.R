@@ -221,7 +221,7 @@ plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
     scales::breaks_pretty(n = 6)
   }
   axis_note <- switch(x_scale,
-    pseudo_log = paste0("Zero-safe log axis (linear near 0; sigma = ", sigma, " ", units, ")."),
+    pseudo_log = paste0("Pseudo-log axis; linear near 0 (scale: ", sigma, " ", units, ")."),
     log10 = "Log10 suction axis; h = 0 cannot be displayed.",
     linear = "Linear suction axis."
   )
@@ -887,12 +887,19 @@ server <- function(input, output, session) {
         plot.subtitle = element_text(size = font_pt - 1),
         plot.caption = element_text(size = caption_size, hjust = 0, margin = margin(t = 8)),
         legend.position = if (isTRUE(input$figure_show_legend)) "top" else "none",
-        legend.justification = "left",
-        legend.box = if (width_mm < 110) "vertical" else "horizontal",
+        legend.justification = "left", legend.box = "horizontal",
+        legend.key.width = grid::unit(4, "mm"),
+        legend.key.height = grid::unit(3, "mm"),
+        legend.spacing.x = grid::unit(2, "mm"),
+        legend.spacing.y = grid::unit(0, "mm"),
+        legend.box.spacing = grid::unit(1, "mm"),
+        legend.margin = margin(1, 1, 1, 1),
         legend.title = element_blank(),
         plot.margin = margin(8, 12, 8, 8)
       )
-    if (!isTRUE(input$figure_show_title)) p <- p + labs(title = NULL)
+    title_chars <- max(12, floor((width_mm - 24) * 72 / 25.4 / ((font_pt + 1) * 0.5)))
+    p <- p + labs(title = if (isTRUE(input$figure_show_title))
+                    paste(strwrap(as.character(plot_id), width = title_chars), collapse = "\n") else NULL)
     if (!isTRUE(input$figure_show_stats)) p <- p + labs(subtitle = NULL)
     p
   })

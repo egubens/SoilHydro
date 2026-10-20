@@ -345,7 +345,7 @@ plot_vg_fits <- function(data, params_df, id = NULL, id_value = NULL, theta, h,
     scales::breaks_pretty(n = 6)
   }
   axis_note <- switch(x_scale,
-    pseudo_log = paste0("Zero-safe log axis (linear near 0; sigma = ", sigma, " ", units, ")."),
+    pseudo_log = paste0("Pseudo-log axis; linear near 0 (scale: ", sigma, " ", units, ")."),
     log10 = "Log10 suction axis; h = 0 cannot be displayed.",
     linear = "Linear suction axis."
   )
