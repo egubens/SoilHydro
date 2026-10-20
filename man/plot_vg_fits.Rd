@@ -13,7 +13,9 @@ plot_vg_fits(
   h,
   units = c("kPa", "hPa"),
   log_x = TRUE,
-  points = 400
+  points = 400,
+  x_scale = NULL,
+  h_range = NULL
 )
 }
 \arguments{
@@ -29,9 +31,16 @@ Ignored if \code{id} is \code{NULL}.}
 
 \item{units}{Units of the suction column in \code{data}: "kPa" or "hPa".}
 
-\item{log_x}{Logical; draw x-axis on log10 scale.}
+\item{log_x}{Logical; draw x-axis on log10 scale when \code{x_scale=NULL}.}
 
 \item{points}{Integer; number of points for the smooth VG curve.}
+
+\item{x_scale}{Optional axis type: \code{"pseudo_log"}, \code{"log10"} or
+\code{"linear"}. Overrides \code{log_x}. Pseudo-log includes saturation at
+zero and uses a linear transition scale of 0.1 kPa (1 hPa).}
+
+\item{h_range}{Optional increasing, non-negative length-two vector giving the
+prediction range in \code{units}. Defaults to the observed range.}
 }
 \value{
 Named list of ggplot objects, one per ID (or a single plot if only one ID).
@@ -39,6 +48,12 @@ Named list of ggplot objects, one per ID (or a single plot if only one ID).
 \description{
 Produces one ggplot per treatment/ID, overlaying observed points
 with the fitted Van Genuchten curve. Uses tidy-eval (no aes_string).
+}
+\details{
+Keep saturation observations at \eqn{h=0}; do not replace zeros by
+tiny positive values for plotting. Choose \code{x_scale="pseudo_log"} to
+display them. A strict log10 axis omits zero with a warning. Axis transforms
+affect display only; predictions are evaluated at untransformed suction.
 }
 \examples{
 ## Plot observed vs fitted curves per ID
@@ -59,3 +74,4 @@ with the fitted Van Genuchten curve. Uses tidy-eval (no aes_string).
   p_list[["A"]]
 }
 }
+
